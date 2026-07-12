@@ -8,18 +8,27 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 
@@ -46,6 +55,22 @@ private sealed interface SharedContent {
     data class Unsupported(val mimeType: String?) : SharedContent
 }
 
+private enum class RiskLevel(val label: String) {
+    HIGH("High caution"),
+    MEDIUM("Review carefully"),
+    LOW("No urgent warning found")
+}
+
+private data class DecisionAnalysis(
+    val category: String,
+    val risk: RiskLevel,
+    val headline: String,
+    val explanation: String,
+    val evidence: List<String>,
+    val primaryAction: String,
+    val secondaryAction: String
+)
+
 private fun Intent.toSharedContent(): SharedContent {
     if (action != Intent.ACTION_SEND) return SharedContent.Empty
     val incomingType = type
@@ -70,12 +95,113 @@ private fun Intent.sharedStreamUri(): Uri? =
         getParcelableExtra(Intent.EXTRA_STREAM)
     }
 
-@androidx.compose.runtime.Composable
+private fun analyzeText(rawText: String): DecisionAnalysis {
+    val text = rawText.lowercase()
+    val evidence = mutableListOf<String>()
+
+    val credentialSignals = listOf("password", "passcode", "verification code", "security code", "one-time code", "otp")
+    val paymentSignals = listOf("gift card", "wire transfer", "crypto", "bitcoin", "zelle", "cash app", "venmo", "send money")
+    val pressureSignals = listOf("act now", "urgent", "immediately", "final notice", "account suspended", "within 24 hours", "do not tell")
+    val subscriptionSignals = listOf("subscription", "free trial", "renewal", "renews", "auto-renew", "cancel anytime")
+    val billSignals = listOf("amount due", "payment due", "invoice", "statement balance", "past due", "due date")
+    val appointmentSignals = listOf("appointment", "reservation", "scheduled for", "check-in", "meeting")
+
+    fun matches(signals: List<String>): List<String> = signals.filter(text::contains)
+
+    val credentials = matches(credentialSignals)
+    val payments = matches(paymentSignals)
+    val pressure = matches(pressureSignals)
+    val subscriptions = matches(subscriptionSignals)
+    val bills = matches(billSignals)
+    val appointments = matches(appointmentSignals)
+    val hasLink = Regex("https?://|www\\.", RegexOption.IGNORE_CASE).containsMatchIn(rawText)
+
+    if (credentials.isNotEmpty()) evidence += "Requests a password or verification code"
+    if (payments.isNotEmpty()) evidence += "Requests a hard-to-reverse payment method"
+    if (pressure.isNotEmpty()) evidence += "Uses urgency or pressure language"
+    if (hasLink && (credentials.isNotEmpty() || pressure.isNotEmpty())) evidence += "Includes a link alongside a sensitive request"
+
+    if (credentials.isNotEmpty() || payments.isNotEmpty()) {
+        return DecisionAnalysis(
+            category = "Possible scam or account takeover",
+            risk = RiskLevel.HIGH,
+            headline = "Pause before responding",
+            explanation = "Do not use the supplied link or share a code. Contact the organization through its official app, statement, or a number you independently verify.",
+            evidence = evidence,
+            primaryAction = "Verify safely",
+            secondaryAction = "Save evidence"
+        )
+    }
+
+    if (pressure.isNotEmpty() && hasLink) {
+        return DecisionAnalysis(
+            category = "Suspicious request",
+            risk = RiskLevel.MEDIUM,
+            headline = "Verify the sender independently",
+            explanation = "Urgency plus a link can be used to push a rushed decision. Open the official service directly instead of following the message.",
+            evidence = evidence,
+            primaryAction = "Verify safely",
+            secondaryAction = "Ask someone trusted"
+        )
+    }
+
+    if (subscriptions.isNotEmpty()) {
+        return DecisionAnalysis(
+            category = "Subscription or renewal",
+            risk = RiskLevel.LOW,
+            headline = "Review the renewal terms",
+            explanation = "Confirm the next charge, billing cadence, and cancellation deadline before deciding what to do.",
+            evidence = listOf("Mentions recurring service or renewal language"),
+            primaryAction = "Track renewal",
+            secondaryAction = "Find cancellation path"
+        )
+    }
+
+    if (bills.isNotEmpty()) {
+        return DecisionAnalysis(
+            category = "Bill or payment deadline",
+            risk = RiskLevel.LOW,
+            headline = "Confirm the amount and due date",
+            explanation = "Compare this notice with the official account before paying, then create a reminder using the confirmed date.",
+            evidence = listOf("Contains bill, balance, invoice, or due-date language"),
+            primaryAction = "Set reminder",
+            secondaryAction = "Mark as reviewed"
+        )
+    }
+
+    if (appointments.isNotEmpty()) {
+        return DecisionAnalysis(
+            category = "Appointment or scheduled event",
+            risk = RiskLevel.LOW,
+            headline = "Check the date, time, and location",
+            explanation = "Confirm the details before adding the event to your calendar.",
+            evidence = listOf("Contains appointment or scheduling language"),
+            primaryAction = "Add to calendar",
+            secondaryAction = "Set reminder"
+        )
+    }
+
+    return DecisionAnalysis(
+        category = "General information",
+        risk = RiskLevel.LOW,
+        headline = "No clear urgent action detected",
+        explanation = "Read the original carefully and verify any sender, payment, link, or deadline before acting.",
+        evidence = emptyList(),
+        primaryAction = "Mark as reviewed",
+        secondaryAction = "Save for later"
+    )
+}
+
+@Composable
 private fun HoldUpApp(content: SharedContent) {
+    var analysis by remember(content) { mutableStateOf<DecisionAnalysis?>(null) }
+
     MaterialTheme {
         Surface(modifier = Modifier.fillMaxSize()) {
             Column(
-                modifier = Modifier.padding(24.dp),
+                modifier = Modifier
+                    .verticalScroll(rememberScrollState())
+                    .padding(24.dp),
                 verticalArrangement = Arrangement.Center
             ) {
                 Text("HOLD UP", style = MaterialTheme.typography.labelLarge)
@@ -84,39 +210,97 @@ private fun HoldUpApp(content: SharedContent) {
                 Spacer(Modifier.height(12.dp))
                 Text("Shared content stays on this device until you explicitly choose an action.")
                 Spacer(Modifier.height(24.dp))
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(24.dp)
-                ) {
-                    Column(Modifier.padding(20.dp)) {
-                        when (content) {
-                            SharedContent.Empty -> {
-                                Text("Nothing shared yet", style = MaterialTheme.typography.titleLarge)
-                                Text("Use Share from a message, browser, image, or PDF and choose HOLD UP.")
-                            }
-                            is SharedContent.Text -> {
-                                Text("Shared text", style = MaterialTheme.typography.titleLarge)
-                                Text(content.value.take(600))
-                            }
-                            is SharedContent.File -> {
-                                Text("Shared file ready", style = MaterialTheme.typography.titleLarge)
-                                Text(if (content.mimeType == "application/pdf") "PDF document" else "Image")
-                                Text("HOLD UP has temporary access to this item for this review.")
-                            }
-                            is SharedContent.Unsupported -> {
-                                Text("This format is not supported", style = MaterialTheme.typography.titleLarge)
-                                Text(content.mimeType ?: "The sending app did not provide a content type.")
-                            }
-                        }
-                        if (content is SharedContent.Text || content is SharedContent.File) {
-                            Spacer(Modifier.height(20.dp))
-                            Button(onClick = { }, modifier = Modifier.fillMaxWidth()) {
-                                Text("Analyze privately")
-                            }
-                        }
-                    }
+
+                if (analysis != null) {
+                    AnalysisCard(analysis = requireNotNull(analysis), onReviewAgain = { analysis = null })
+                } else {
+                    IntakeCard(content = content, onAnalyze = {
+                        if (content is SharedContent.Text) analysis = analyzeText(content.value)
+                    })
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun IntakeCard(content: SharedContent, onAnalyze: () -> Unit) {
+    Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp)) {
+        Column(Modifier.padding(20.dp)) {
+            when (content) {
+                SharedContent.Empty -> {
+                    Text("Nothing shared yet", style = MaterialTheme.typography.titleLarge)
+                    Text("Use Share from a message, browser, image, or PDF and choose HOLD UP.")
+                }
+                is SharedContent.Text -> {
+                    Text("Shared text", style = MaterialTheme.typography.titleLarge)
+                    Spacer(Modifier.height(8.dp))
+                    Text(content.value.take(600))
+                    if (content.value.length > 600) Text("Preview shortened for review.", style = MaterialTheme.typography.labelMedium)
+                }
+                is SharedContent.File -> {
+                    Text("Shared file ready", style = MaterialTheme.typography.titleLarge)
+                    Text(if (content.mimeType == "application/pdf") "PDF document" else "Image")
+                    Text("HOLD UP has temporary access to this item for this review. OCR is the next native capability being connected.")
+                }
+                is SharedContent.Unsupported -> {
+                    Text("This format is not supported", style = MaterialTheme.typography.titleLarge)
+                    Text(content.mimeType ?: "The sending app did not provide a content type.")
+                }
+            }
+
+            if (content is SharedContent.Text) {
+                Spacer(Modifier.height(20.dp))
+                Button(onClick = onAnalyze, modifier = Modifier.fillMaxWidth()) {
+                    Text("Analyze privately")
+                }
+            } else if (content is SharedContent.File) {
+                Spacer(Modifier.height(20.dp))
+                Button(onClick = {}, enabled = false, modifier = Modifier.fillMaxWidth()) {
+                    Text("OCR coming next")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AnalysisCard(analysis: DecisionAnalysis, onReviewAgain: () -> Unit) {
+    Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp)) {
+        Column(Modifier.padding(20.dp)) {
+            Text(analysis.risk.label, style = MaterialTheme.typography.labelLarge)
+            Spacer(Modifier.height(6.dp))
+            Text(analysis.category, style = MaterialTheme.typography.titleMedium)
+            Spacer(Modifier.height(8.dp))
+            Text(analysis.headline, style = MaterialTheme.typography.headlineSmall)
+            Spacer(Modifier.height(10.dp))
+            Text(analysis.explanation)
+
+            if (analysis.evidence.isNotEmpty()) {
+                Spacer(Modifier.height(16.dp))
+                Text("Why HOLD UP flagged this", style = MaterialTheme.typography.titleSmall)
+                analysis.evidence.forEach { item ->
+                    Spacer(Modifier.height(6.dp))
+                    Text("• $item")
+                }
+            }
+
+            Spacer(Modifier.height(20.dp))
+            Button(onClick = {}, modifier = Modifier.fillMaxWidth()) {
+                Text(analysis.primaryAction)
+            }
+            Spacer(Modifier.height(10.dp))
+            Row(modifier = Modifier.fillMaxWidth()) {
+                OutlinedButton(onClick = {}, modifier = Modifier.weight(1f)) {
+                    Text(analysis.secondaryAction)
+                }
+                Spacer(Modifier.width(10.dp))
+                OutlinedButton(onClick = onReviewAgain, modifier = Modifier.weight(1f)) {
+                    Text("Review again")
+                }
+            }
+            Spacer(Modifier.height(14.dp))
+            Text("First-pass guidance only. HOLD UP does not open links, contact senders, or move money.", style = MaterialTheme.typography.bodySmall)
         }
     }
 }
