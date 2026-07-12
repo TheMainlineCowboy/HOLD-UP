@@ -26,6 +26,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -35,11 +36,15 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import java.io.IOException
+import java.math.BigDecimal
+import java.math.RoundingMode
 
 class MainActivity : ComponentActivity() {
     private val sharedContent = mutableStateOf<SharedContent>(SharedContent.Empty)
@@ -72,6 +77,12 @@ private sealed interface AnalysisState {
         val sourceLabel: String,
         val sourceText: String
     ) : AnalysisState
+
+    data class ReviewBill(
+        val sourceText: String,
+        val draft: BillDraft
+    ) : AnalysisState
+
     data class Error(val message: String) : AnalysisState
 }
 
@@ -138,6 +149,7 @@ private fun HoldUpApp(content: SharedContent) {
                 "Shared text",
                 content.value
             )
+
             is SharedContent.File -> {
                 if (!content.mimeType.startsWith("image/")) return
                 analysisState = AnalysisState.Processing
@@ -177,13 +189,15 @@ private fun HoldUpApp(content: SharedContent) {
                     }
                     .addOnCompleteListener { recognizer.close() }
             }
+
             else -> Unit
         }
     }
 
     fun performPrimaryAction(state: AnalysisState.Complete) {
-        actionMessage = when (state.analysis.primaryAction) {
-            "Add to calendar" -> try {
+        actionMessage = null
+        when (state.analysis.primaryAction) {
+            "Add to calendar" -> actionMessage = try {
                 val draft = AppointmentParser.parse(state.sourceText)
                 context.startActivity(calendarDraftIntent(state.sourceText))
                 if (draft.startMillis != null) {
@@ -194,12 +208,20 @@ private fun HoldUpApp(content: SharedContent) {
             } catch (_: ActivityNotFoundException) {
                 "No calendar app is available on this device."
             }
-            else -> "${state.analysis.primaryAction} is not connected yet. HOLD UP did not change anything on your device."
+
+            "Set reminder" -> analysisState = AnalysisState.ReviewBill(
+                sourceText = state.sourceText,
+                draft = BillDraftParser.parse(state.sourceText)
+            )
+
+            else -> actionMessage =
+                "${state.analysis.primaryAction} is not connected yet. HOLD UP did not change anything on your device."
         }
     }
 
     fun performSecondaryAction(state: AnalysisState.Complete) {
-        actionMessage = "${state.analysis.secondaryAction} is not connected yet. HOLD UP did not change anything on your device."
+        actionMessage =
+            "${state.analysis.secondaryAction} is not connected yet. HOLD UP did not change anything on your device."
     }
 
     MaterialTheme {
@@ -230,6 +252,21 @@ private fun HoldUpApp(content: SharedContent) {
                             analysisState = AnalysisState.Ready
                         }
                     )
+
+                    is AnalysisState.ReviewBill -> BillReviewCard(
+                        initialDraft = state.draft,
+                        onBack = { analysisState = AnalysisState.Ready },
+                        onConfirmed = { reviewed ->
+                            actionMessage = buildString {
+                                append("Bill details confirmed for this review: ")
+                                append(reviewed.merchant)
+                                reviewed.amountDisplay()?.let { append(" · $it") }
+                                append(" · due day ${reviewed.dueDay} · ${reviewed.cadence?.displayName}.")
+                                append(" No recurring record or reminder was saved yet.")
+                            }
+                        }
+                    )
+
                     is AnalysisState.Error -> ErrorCard(state.message) {
                         analysisState = AnalysisState.Ready
                     }
@@ -252,6 +289,7 @@ private fun IntakeCard(content: SharedContent, onAnalyze: () -> Unit) {
                     Text("Nothing shared yet", style = MaterialTheme.typography.titleLarge)
                     Text("Use Share from a message, browser, image, or PDF and choose HOLD UP.")
                 }
+
                 is SharedContent.Text -> {
                     Text("Shared text", style = MaterialTheme.typography.titleLarge)
                     Spacer(Modifier.height(8.dp))
@@ -260,6 +298,7 @@ private fun IntakeCard(content: SharedContent, onAnalyze: () -> Unit) {
                         Text("Preview shortened for review.", style = MaterialTheme.typography.labelMedium)
                     }
                 }
+
                 is SharedContent.File -> {
                     Text("Shared file ready", style = MaterialTheme.typography.titleLarge)
                     Text(if (content.mimeType == "application/pdf") "PDF document" else "Image")
@@ -271,6 +310,7 @@ private fun IntakeCard(content: SharedContent, onAnalyze: () -> Unit) {
                         }
                     )
                 }
+
                 is SharedContent.Unsupported -> {
                     Text("This format is not supported", style = MaterialTheme.typography.titleLarge)
                     Text(content.mimeType ?: "The sending app did not provide a content type.")
@@ -286,6 +326,7 @@ private fun IntakeCard(content: SharedContent, onAnalyze: () -> Unit) {
                         style = MaterialTheme.typography.bodySmall
                     )
                 }
+
                 content is SharedContent.File -> ActionButton("PDF analysis coming later", {}, enabled = false)
             }
         }
@@ -324,6 +365,141 @@ private fun ErrorCard(message: String, onTryAgain: () -> Unit) {
             OutlinedButton(onClick = onTryAgain, modifier = Modifier.fillMaxWidth()) {
                 Text("Review shared item")
             }
+        }
+    }
+}
+
+@Composable
+private fun BillReviewCard(
+    initialDraft: BillDraft,
+    onBack: () -> Unit,
+    onConfirmed: (BillDraft) -> Unit
+) {
+    var merchant by remember(initialDraft) { mutableStateOf(initialDraft.merchant.orEmpty()) }
+    var amount by remember(initialDraft) { mutableStateOf(initialDraft.amountDisplay().orEmpty()) }
+    var dueDay by remember(initialDraft) { mutableStateOf(initialDraft.dueDay?.toString().orEmpty()) }
+    var cadence by remember(initialDraft) { mutableStateOf(initialDraft.cadence?.displayName.orEmpty()) }
+    var autopay by remember(initialDraft) {
+        mutableStateOf(
+            when (initialDraft.autopayEnabled) {
+                true -> "On"
+                false -> "Off"
+                null -> "Unknown"
+            }
+        )
+    }
+    var validationMessage by remember(initialDraft) { mutableStateOf<String?>(null) }
+
+    fun reviewedDraft(): BillDraft? {
+        val parsedAmount = amount.trim().removePrefix("$").replace(",", "")
+            .takeIf { it.isNotBlank() }
+            ?.let {
+                try {
+                    BigDecimal(it)
+                        .setScale(2, RoundingMode.UNNECESSARY)
+                        .movePointRight(2)
+                        .longValueExact()
+                } catch (_: Exception) {
+                    null
+                }
+            }
+        val parsedDueDay = dueDay.toIntOrNull()?.takeIf { it in 1..31 }
+        val parsedCadence = BillCadence.entries.firstOrNull {
+            it.displayName.equals(cadence.trim(), ignoreCase = true)
+        }
+        if (merchant.isBlank() || parsedDueDay == null || parsedCadence == null) return null
+        return BillDraft(
+            merchant = merchant.trim(),
+            amountCents = parsedAmount,
+            dueDay = parsedDueDay,
+            cadence = parsedCadence,
+            autopayEnabled = when (autopay) {
+                "On" -> true
+                "Off" -> false
+                else -> null
+            },
+            detectedFields = initialDraft.detectedFields
+        )
+    }
+
+    Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp)) {
+        Column(Modifier.padding(20.dp)) {
+            Text("Review recurring bill", style = MaterialTheme.typography.titleLarge)
+            Spacer(Modifier.height(8.dp))
+            Text("Correct anything HOLD UP misread. Nothing is saved until a later explicit save step.")
+            Spacer(Modifier.height(18.dp))
+            OutlinedTextField(
+                value = merchant,
+                onValueChange = { merchant = it },
+                label = { Text("Merchant") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(Modifier.height(12.dp))
+            OutlinedTextField(
+                value = amount,
+                onValueChange = { amount = it },
+                label = { Text("Amount (optional)") },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(Modifier.height(12.dp))
+            OutlinedTextField(
+                value = dueDay,
+                onValueChange = { dueDay = it.filter(Char::isDigit).take(2) },
+                label = { Text("Due day (1–31)") },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(Modifier.height(12.dp))
+            OutlinedTextField(
+                value = cadence,
+                onValueChange = { cadence = it },
+                label = { Text("Cadence: Weekly, Monthly, Quarterly, or Yearly") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(Modifier.height(16.dp))
+            Text("Autopay", style = MaterialTheme.typography.titleSmall)
+            Spacer(Modifier.height(8.dp))
+            Row(modifier = Modifier.fillMaxWidth()) {
+                listOf("On", "Off", "Unknown").forEachIndexed { index, option ->
+                    OutlinedButton(
+                        onClick = { autopay = option },
+                        enabled = autopay != option,
+                        modifier = Modifier.weight(1f)
+                    ) { Text(option) }
+                    if (index < 2) Spacer(Modifier.width(8.dp))
+                }
+            }
+            validationMessage?.let {
+                Spacer(Modifier.height(12.dp))
+                Text(it, style = MaterialTheme.typography.bodySmall)
+            }
+            Spacer(Modifier.height(20.dp))
+            Button(
+                onClick = {
+                    val reviewed = reviewedDraft()
+                    if (reviewed == null) {
+                        validationMessage = "Enter a merchant, a valid due day, and one supported cadence before confirming."
+                    } else {
+                        validationMessage = "Details confirmed locally for this review."
+                        onConfirmed(reviewed)
+                    }
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("Confirm details") }
+            Spacer(Modifier.height(10.dp))
+            OutlinedButton(onClick = onBack, modifier = Modifier.fillMaxWidth()) {
+                Text("Back without confirming")
+            }
+            Spacer(Modifier.height(14.dp))
+            Text(
+                "Confirmation does not create a payment, reminder, or recurring record.",
+                style = MaterialTheme.typography.bodySmall
+            )
         }
     }
 }
@@ -370,7 +546,7 @@ private fun AnalysisCard(
             }
             Spacer(Modifier.height(14.dp))
             Text(
-                "First-pass guidance only. HOLD UP does not save calendar events without your confirmation.",
+                "First-pass guidance only. HOLD UP does not save calendar events or recurring bills without your confirmation.",
                 style = MaterialTheme.typography.bodySmall
             )
         }
