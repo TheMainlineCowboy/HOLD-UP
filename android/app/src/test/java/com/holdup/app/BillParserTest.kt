@@ -11,7 +11,7 @@ class BillParserTest {
         val draft = BillParser.parse(
             """
             Merchant: APS
-            Amount due: $184.27
+            Amount due: ${'$'}184.27
             Payment due on the 4th
             Billing cadence: monthly
             Autopay enabled
@@ -32,7 +32,7 @@ class BillParserTest {
             """
             Desert Internet
             Statement
-            Balance due $79.99
+            Balance due ${'$'}79.99
             Due day: 18
             every month
             """.trimIndent()
@@ -46,7 +46,7 @@ class BillParserTest {
 
     @Test
     fun rejectsInvalidDueDayAndLeavesUnknownFieldsBlank() {
-        val draft = BillParser.parse("Invoice\nAmount due: $22.00\nPayment due on the 45th")
+        val draft = BillParser.parse("Invoice\nAmount due: ${'$'}22.00\nPayment due on the 45th")
 
         assertNull(draft.merchant)
         assertEquals(2_200L, draft.amountCents)
@@ -59,7 +59,7 @@ class BillParserTest {
     @Test
     fun detectsDisabledAutopayAndAnnualCadence() {
         val draft = BillParser.parse(
-            "Provider: Roadside Club\nAnnual membership $120.00\nAuto-pay disabled"
+            "Provider: Roadside Club\nAnnual membership ${'$'}120.00\nAuto-pay disabled"
         )
 
         assertEquals("Roadside Club", draft.merchant)
