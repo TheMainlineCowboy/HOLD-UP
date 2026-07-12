@@ -64,25 +64,11 @@ private sealed interface SharedContent {
     data class Unsupported(val mimeType: String?) : SharedContent
 }
 
-private enum class RiskLevel(val label: String) {
-    HIGH("High caution"), MEDIUM("Review carefully"), LOW("No urgent warning found")
-}
-
-private data class DecisionAnalysis(
-    val category: String,
-    val risk: RiskLevel,
-    val headline: String,
-    val explanation: String,
-    val evidence: List<String>,
-    val primaryAction: String,
-    val secondaryAction: String
-)
-
 private sealed interface AnalysisState {
     data object Ready : AnalysisState
     data object Processing : AnalysisState
     data class Complete(
-        val analysis: DecisionAnalysis,
+        val analysis: DecisionResult,
         val sourceLabel: String,
         val sourceText: String
     ) : AnalysisState
@@ -110,60 +96,6 @@ private fun Intent.sharedStreamUri(): Uri? =
     } else {
         getParcelableExtra(Intent.EXTRA_STREAM)
     }
-
-private fun analyzeText(rawText: String): DecisionAnalysis {
-    val text = rawText.lowercase()
-    val evidence = mutableListOf<String>()
-    fun matches(signals: List<String>) = signals.filter(text::contains)
-
-    val credentials = matches(listOf("password", "passcode", "verification code", "security code", "one-time code", "otp"))
-    val payments = matches(listOf("gift card", "wire transfer", "crypto", "bitcoin", "zelle", "cash app", "venmo", "send money"))
-    val pressure = matches(listOf("act now", "urgent", "immediately", "final notice", "account suspended", "within 24 hours", "do not tell"))
-    val subscriptions = matches(listOf("subscription", "free trial", "renewal", "renews", "auto-renew", "cancel anytime"))
-    val bills = matches(listOf("amount due", "payment due", "invoice", "statement balance", "past due", "due date"))
-    val appointments = matches(listOf("appointment", "reservation", "scheduled for", "check-in", "meeting"))
-    val hasLink = Regex("https?://|www\\.", RegexOption.IGNORE_CASE).containsMatchIn(rawText)
-
-    if (credentials.isNotEmpty()) evidence += "Requests a password or verification code"
-    if (payments.isNotEmpty()) evidence += "Requests a hard-to-reverse payment method"
-    if (pressure.isNotEmpty()) evidence += "Uses urgency or pressure language"
-    if (hasLink && (credentials.isNotEmpty() || pressure.isNotEmpty())) {
-        evidence += "Includes a link alongside a sensitive request"
-    }
-
-    return when {
-        credentials.isNotEmpty() || payments.isNotEmpty() -> DecisionAnalysis(
-            "Possible scam or account takeover", RiskLevel.HIGH, "Pause before responding",
-            "Do not use the supplied link or share a code. Contact the organization through an independently verified channel.",
-            evidence, "Verify safely", "Save evidence"
-        )
-        pressure.isNotEmpty() && hasLink -> DecisionAnalysis(
-            "Suspicious request", RiskLevel.MEDIUM, "Verify the sender independently",
-            "Urgency plus a link can push a rushed decision. Open the official service directly instead.",
-            evidence, "Verify safely", "Ask someone trusted"
-        )
-        subscriptions.isNotEmpty() -> DecisionAnalysis(
-            "Subscription or renewal", RiskLevel.LOW, "Review the renewal terms",
-            "Confirm the next charge, billing cadence, and cancellation deadline before deciding what to do.",
-            listOf("Mentions recurring service or renewal language"), "Track renewal", "Find cancellation path"
-        )
-        bills.isNotEmpty() -> DecisionAnalysis(
-            "Bill or payment deadline", RiskLevel.LOW, "Confirm the amount and due date",
-            "Compare this notice with the official account before paying, then create a reminder using the confirmed date.",
-            listOf("Contains bill, balance, invoice, or due-date language"), "Set reminder", "Mark as reviewed"
-        )
-        appointments.isNotEmpty() -> DecisionAnalysis(
-            "Appointment or scheduled event", RiskLevel.LOW, "Check the date, time, and location",
-            "Confirm the details before adding the event to your calendar.",
-            listOf("Contains appointment or scheduling language"), "Add to calendar", "Set reminder"
-        )
-        else -> DecisionAnalysis(
-            "General information", RiskLevel.LOW, "No clear urgent action detected",
-            "Read the original carefully and verify any sender, payment, link, or deadline before acting.",
-            emptyList(), "Mark as reviewed", "Save for later"
-        )
-    }
-}
 
 private fun calendarDraftIntent(sourceText: String): Intent {
     val draft = AppointmentParser.parse(sourceText)
@@ -201,18 +133,25 @@ private fun HoldUpApp(content: SharedContent) {
     fun analyzeSharedContent() {
         actionMessage = null
         when (content) {
-            is SharedContent.Text -> analysisState =
-                AnalysisState.Complete(analyzeText(content.value), "Shared text", content.value)
+            is SharedContent.Text -> analysisState = AnalysisState.Complete(
+                DecisionAnalyzer.analyze(content.value),
+                "Shared text",
+                content.value
+            )
             is SharedContent.File -> {
                 if (!content.mimeType.startsWith("image/")) return
                 analysisState = AnalysisState.Processing
                 val image = try {
                     InputImage.fromFilePath(context, content.uri)
                 } catch (_: IOException) {
-                    analysisState = AnalysisState.Error("HOLD UP could not read this image. Try sharing the original image again.")
+                    analysisState = AnalysisState.Error(
+                        "HOLD UP could not read this image. Try sharing the original image again."
+                    )
                     return
                 } catch (_: SecurityException) {
-                    analysisState = AnalysisState.Error("The sending app stopped sharing this image before HOLD UP could read it.")
+                    analysisState = AnalysisState.Error(
+                        "The sending app stopped sharing this image before HOLD UP could read it."
+                    )
                     return
                 }
                 val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
@@ -220,17 +159,21 @@ private fun HoldUpApp(content: SharedContent) {
                     .addOnSuccessListener { result ->
                         val extractedText = result.text.trim()
                         analysisState = if (extractedText.isBlank()) {
-                            AnalysisState.Error("No readable text was found. Try a sharper image with the message filling more of the frame.")
+                            AnalysisState.Error(
+                                "No readable text was found. Try a sharper image with the message filling more of the frame."
+                            )
                         } else {
                             AnalysisState.Complete(
-                                analyzeText(extractedText),
+                                DecisionAnalyzer.analyze(extractedText),
                                 "Text found in shared image",
                                 extractedText
                             )
                         }
                     }
                     .addOnFailureListener {
-                        analysisState = AnalysisState.Error("Text recognition failed. Nothing was uploaded; try sharing a clearer copy.")
+                        analysisState = AnalysisState.Error(
+                            "Text recognition failed. Nothing was uploaded; try sharing a clearer copy."
+                        )
                     }
                     .addOnCompleteListener { recognizer.close() }
             }
@@ -251,14 +194,20 @@ private fun HoldUpApp(content: SharedContent) {
             } catch (_: ActivityNotFoundException) {
                 "No calendar app is available on this device."
             }
-            else -> "This action is not connected yet. HOLD UP did not change anything on your device."
+            else -> "${state.analysis.primaryAction} is not connected yet. HOLD UP did not change anything on your device."
         }
+    }
+
+    fun performSecondaryAction(state: AnalysisState.Complete) {
+        actionMessage = "${state.analysis.secondaryAction} is not connected yet. HOLD UP did not change anything on your device."
     }
 
     MaterialTheme {
         Surface(modifier = Modifier.fillMaxSize()) {
             Column(
-                modifier = Modifier.verticalScroll(rememberScrollState()).padding(24.dp),
+                modifier = Modifier
+                    .verticalScroll(rememberScrollState())
+                    .padding(24.dp),
                 verticalArrangement = Arrangement.Center
             ) {
                 Text("HOLD UP", style = MaterialTheme.typography.labelLarge)
@@ -272,9 +221,10 @@ private fun HoldUpApp(content: SharedContent) {
                     AnalysisState.Ready -> IntakeCard(content, ::analyzeSharedContent)
                     AnalysisState.Processing -> ProcessingCard()
                     is AnalysisState.Complete -> AnalysisCard(
-                        state.analysis,
-                        state.sourceLabel,
+                        analysis = state.analysis,
+                        sourceLabel = state.sourceLabel,
                         onPrimaryAction = { performPrimaryAction(state) },
+                        onSecondaryAction = { performSecondaryAction(state) },
                         onReviewAgain = {
                             actionMessage = null
                             analysisState = AnalysisState.Ready
@@ -331,7 +281,10 @@ private fun IntakeCard(content: SharedContent, onAnalyze: () -> Unit) {
                 content is SharedContent.File && content.mimeType.startsWith("image/") -> {
                     ActionButton("Read image and analyze", onAnalyze)
                     Spacer(Modifier.height(10.dp))
-                    Text("Recognition runs on this device. The image is not uploaded.", style = MaterialTheme.typography.bodySmall)
+                    Text(
+                        "Recognition runs on this device. The image is not uploaded.",
+                        style = MaterialTheme.typography.bodySmall
+                    )
                 }
                 content is SharedContent.File -> ActionButton("PDF analysis coming later", {}, enabled = false)
             }
@@ -377,9 +330,10 @@ private fun ErrorCard(message: String, onTryAgain: () -> Unit) {
 
 @Composable
 private fun AnalysisCard(
-    analysis: DecisionAnalysis,
+    analysis: DecisionResult,
     sourceLabel: String,
     onPrimaryAction: () -> Unit,
+    onSecondaryAction: () -> Unit,
     onReviewAgain: () -> Unit
 ) {
     Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp)) {
@@ -406,7 +360,7 @@ private fun AnalysisCard(
             }
             Spacer(Modifier.height(10.dp))
             Row(modifier = Modifier.fillMaxWidth()) {
-                OutlinedButton(onClick = {}, modifier = Modifier.weight(1f)) {
+                OutlinedButton(onClick = onSecondaryAction, modifier = Modifier.weight(1f)) {
                     Text(analysis.secondaryAction)
                 }
                 Spacer(Modifier.width(10.dp))
