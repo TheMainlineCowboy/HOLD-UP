@@ -21,6 +21,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
@@ -31,7 +32,12 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import com.google.mlkit.vision.common.InputImage
+import com.google.mlkit.vision.text.TextRecognition
+import com.google.mlkit.vision.text.latin.TextRecognizerOptions
+import java.io.IOException
 
 class MainActivity : ComponentActivity() {
     private val sharedContent = mutableStateOf<SharedContent>(SharedContent.Empty)
@@ -71,6 +77,13 @@ private data class DecisionAnalysis(
     val primaryAction: String,
     val secondaryAction: String
 )
+
+private sealed interface AnalysisState {
+    data object Ready : AnalysisState
+    data object Processing : AnalysisState
+    data class Complete(val analysis: DecisionAnalysis, val sourceLabel: String) : AnalysisState
+    data class Error(val message: String) : AnalysisState
+}
 
 private fun Intent.toSharedContent(): SharedContent {
     if (action != Intent.ACTION_SEND) return SharedContent.Empty
@@ -195,7 +208,45 @@ private fun analyzeText(rawText: String): DecisionAnalysis {
 
 @Composable
 private fun HoldUpApp(content: SharedContent) {
-    var analysis by remember(content) { mutableStateOf<DecisionAnalysis?>(null) }
+    var analysisState by remember(content) { mutableStateOf<AnalysisState>(AnalysisState.Ready) }
+    val context = LocalContext.current
+
+    fun analyzeSharedContent() {
+        when (content) {
+            is SharedContent.Text -> {
+                analysisState = AnalysisState.Complete(analyzeText(content.value), "Shared text")
+            }
+            is SharedContent.File -> {
+                if (!content.mimeType.startsWith("image/")) return
+                analysisState = AnalysisState.Processing
+                val image = try {
+                    InputImage.fromFilePath(context, content.uri)
+                } catch (_: IOException) {
+                    analysisState = AnalysisState.Error("HOLD UP could not read this image. Try sharing the original image again.")
+                    return
+                } catch (_: SecurityException) {
+                    analysisState = AnalysisState.Error("The sending app stopped sharing this image before HOLD UP could read it.")
+                    return
+                }
+
+                val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
+                recognizer.process(image)
+                    .addOnSuccessListener { result ->
+                        val extractedText = result.text.trim()
+                        analysisState = if (extractedText.isBlank()) {
+                            AnalysisState.Error("No readable text was found. Try a sharper image with the message filling more of the frame.")
+                        } else {
+                            AnalysisState.Complete(analyzeText(extractedText), "Text found in shared image")
+                        }
+                    }
+                    .addOnFailureListener {
+                        analysisState = AnalysisState.Error("Text recognition failed on this image. Nothing was uploaded; try sharing a clearer copy.")
+                    }
+                    .addOnCompleteListener { recognizer.close() }
+            }
+            else -> Unit
+        }
+    }
 
     MaterialTheme {
         Surface(modifier = Modifier.fillMaxSize()) {
@@ -212,12 +263,18 @@ private fun HoldUpApp(content: SharedContent) {
                 Text("Shared content stays on this device until you explicitly choose an action.")
                 Spacer(Modifier.height(24.dp))
 
-                if (analysis != null) {
-                    AnalysisCard(analysis = requireNotNull(analysis), onReviewAgain = { analysis = null })
-                } else {
-                    IntakeCard(content = content, onAnalyze = {
-                        if (content is SharedContent.Text) analysis = analyzeText(content.value)
-                    })
+                when (val state = analysisState) {
+                    AnalysisState.Ready -> IntakeCard(content = content, onAnalyze = ::analyzeSharedContent)
+                    AnalysisState.Processing -> ProcessingCard()
+                    is AnalysisState.Complete -> AnalysisCard(
+                        analysis = state.analysis,
+                        sourceLabel = state.sourceLabel,
+                        onReviewAgain = { analysisState = AnalysisState.Ready }
+                    )
+                    is AnalysisState.Error -> ErrorCard(
+                        message = state.message,
+                        onTryAgain = { analysisState = AnalysisState.Ready }
+                    )
                 }
             }
         }
@@ -242,7 +299,13 @@ private fun IntakeCard(content: SharedContent, onAnalyze: () -> Unit) {
                 is SharedContent.File -> {
                     Text("Shared file ready", style = MaterialTheme.typography.titleLarge)
                     Text(if (content.mimeType == "application/pdf") "PDF document" else "Image")
-                    Text("HOLD UP has temporary access to this item for this review. OCR is the next native capability being connected.")
+                    Text(
+                        if (content.mimeType.startsWith("image/")) {
+                            "HOLD UP can read visible Latin-script text locally, then run the same private first-pass review used for shared messages."
+                        } else {
+                            "HOLD UP has temporary access to this PDF for this review. PDF text extraction is not connected yet."
+                        }
+                    )
                 }
                 is SharedContent.Unsupported -> {
                     Text("This format is not supported", style = MaterialTheme.typography.titleLarge)
@@ -250,15 +313,26 @@ private fun IntakeCard(content: SharedContent, onAnalyze: () -> Unit) {
                 }
             }
 
-            if (content is SharedContent.Text) {
-                Spacer(Modifier.height(20.dp))
-                Button(onClick = onAnalyze, modifier = Modifier.fillMaxWidth()) {
-                    Text("Analyze privately")
+            when {
+                content is SharedContent.Text -> {
+                    Spacer(Modifier.height(20.dp))
+                    Button(onClick = onAnalyze, modifier = Modifier.fillMaxWidth()) {
+                        Text("Analyze privately")
+                    }
                 }
-            } else if (content is SharedContent.File) {
-                Spacer(Modifier.height(20.dp))
-                Button(onClick = {}, enabled = false, modifier = Modifier.fillMaxWidth()) {
-                    Text("OCR coming next")
+                content is SharedContent.File && content.mimeType.startsWith("image/") -> {
+                    Spacer(Modifier.height(20.dp))
+                    Button(onClick = onAnalyze, modifier = Modifier.fillMaxWidth()) {
+                        Text("Read image and analyze")
+                    }
+                    Spacer(Modifier.height(10.dp))
+                    Text("Recognition runs on this device. The image is not uploaded.", style = MaterialTheme.typography.bodySmall)
+                }
+                content is SharedContent.File -> {
+                    Spacer(Modifier.height(20.dp))
+                    Button(onClick = {}, enabled = false, modifier = Modifier.fillMaxWidth()) {
+                        Text("PDF analysis coming later")
+                    }
                 }
             }
         }
@@ -266,9 +340,39 @@ private fun IntakeCard(content: SharedContent, onAnalyze: () -> Unit) {
 }
 
 @Composable
-private fun AnalysisCard(analysis: DecisionAnalysis, onReviewAgain: () -> Unit) {
+private fun ProcessingCard() {
     Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp)) {
         Column(Modifier.padding(20.dp)) {
+            CircularProgressIndicator()
+            Spacer(Modifier.height(18.dp))
+            Text("Reading visible text", style = MaterialTheme.typography.titleLarge)
+            Spacer(Modifier.height(8.dp))
+            Text("This happens locally. HOLD UP will show a first-pass review when recognition finishes.")
+        }
+    }
+}
+
+@Composable
+private fun ErrorCard(message: String, onTryAgain: () -> Unit) {
+    Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp)) {
+        Column(Modifier.padding(20.dp)) {
+            Text("Could not analyze this image", style = MaterialTheme.typography.titleLarge)
+            Spacer(Modifier.height(8.dp))
+            Text(message)
+            Spacer(Modifier.height(20.dp))
+            OutlinedButton(onClick = onTryAgain, modifier = Modifier.fillMaxWidth()) {
+                Text("Review shared item")
+            }
+        }
+    }
+}
+
+@Composable
+private fun AnalysisCard(analysis: DecisionAnalysis, sourceLabel: String, onReviewAgain: () -> Unit) {
+    Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp)) {
+        Column(Modifier.padding(20.dp)) {
+            Text(sourceLabel, style = MaterialTheme.typography.labelMedium)
+            Spacer(Modifier.height(4.dp))
             Text(analysis.risk.label, style = MaterialTheme.typography.labelLarge)
             Spacer(Modifier.height(6.dp))
             Text(analysis.category, style = MaterialTheme.typography.titleMedium)
