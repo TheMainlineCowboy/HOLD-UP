@@ -127,7 +127,9 @@ private fun analyzeText(rawText: String): DecisionAnalysis {
     if (credentials.isNotEmpty()) evidence += "Requests a password or verification code"
     if (payments.isNotEmpty()) evidence += "Requests a hard-to-reverse payment method"
     if (pressure.isNotEmpty()) evidence += "Uses urgency or pressure language"
-    if (hasLink && (credentials.isNotEmpty() || pressure.isNotEmpty())) evidence += "Includes a link alongside a sensitive request"
+    if (hasLink && (credentials.isNotEmpty() || pressure.isNotEmpty())) {
+        evidence += "Includes a link alongside a sensitive request"
+    }
 
     return when {
         credentials.isNotEmpty() || payments.isNotEmpty() -> DecisionAnalysis(
@@ -163,13 +165,31 @@ private fun analyzeText(rawText: String): DecisionAnalysis {
     }
 }
 
-private fun calendarDraftIntent(sourceText: String): Intent = Intent(Intent.ACTION_INSERT).apply {
-    data = CalendarContract.Events.CONTENT_URI
-    putExtra(CalendarContract.Events.TITLE, "HOLD UP reviewed event")
-    putExtra(
-        CalendarContract.Events.DESCRIPTION,
-        "Review and confirm these shared details before saving:\n\n${sourceText.take(4000)}"
-    )
+private fun calendarDraftIntent(sourceText: String): Intent {
+    val draft = AppointmentParser.parse(sourceText)
+    return Intent(Intent.ACTION_INSERT).apply {
+        data = CalendarContract.Events.CONTENT_URI
+        putExtra(CalendarContract.Events.TITLE, draft.title)
+        putExtra(
+            CalendarContract.Events.DESCRIPTION,
+            buildString {
+                append("Review and confirm these shared details before saving:\n\n")
+                append(sourceText.take(4000))
+                if (draft.detectedFields.isNotEmpty()) {
+                    append("\n\nHOLD UP detected: ")
+                    append(draft.detectedFields.joinToString())
+                    append(". Confirm every field before saving.")
+                } else {
+                    append("\n\nHOLD UP could not confidently detect a date, time, or location. Fill those fields manually.")
+                }
+            }
+        )
+        draft.startMillis?.let {
+            putExtra(CalendarContract.EXTRA_EVENT_BEGIN_TIME, it)
+            putExtra(CalendarContract.EXTRA_EVENT_END_TIME, it + 60 * 60 * 1000L)
+        }
+        draft.location?.let { putExtra(CalendarContract.Events.EVENT_LOCATION, it) }
+    }
 }
 
 @Composable
@@ -181,7 +201,8 @@ private fun HoldUpApp(content: SharedContent) {
     fun analyzeSharedContent() {
         actionMessage = null
         when (content) {
-            is SharedContent.Text -> analysisState = AnalysisState.Complete(analyzeText(content.value), "Shared text", content.value)
+            is SharedContent.Text -> analysisState =
+                AnalysisState.Complete(analyzeText(content.value), "Shared text", content.value)
             is SharedContent.File -> {
                 if (!content.mimeType.startsWith("image/")) return
                 analysisState = AnalysisState.Processing
@@ -201,7 +222,11 @@ private fun HoldUpApp(content: SharedContent) {
                         analysisState = if (extractedText.isBlank()) {
                             AnalysisState.Error("No readable text was found. Try a sharper image with the message filling more of the frame.")
                         } else {
-                            AnalysisState.Complete(analyzeText(extractedText), "Text found in shared image", extractedText)
+                            AnalysisState.Complete(
+                                analyzeText(extractedText),
+                                "Text found in shared image",
+                                extractedText
+                            )
                         }
                     }
                     .addOnFailureListener {
@@ -216,8 +241,13 @@ private fun HoldUpApp(content: SharedContent) {
     fun performPrimaryAction(state: AnalysisState.Complete) {
         actionMessage = when (state.analysis.primaryAction) {
             "Add to calendar" -> try {
+                val draft = AppointmentParser.parse(state.sourceText)
                 context.startActivity(calendarDraftIntent(state.sourceText))
-                "Calendar review opened. Nothing is saved until you confirm it there."
+                if (draft.startMillis != null) {
+                    "Calendar review opened with detected details. Nothing is saved until you confirm it there."
+                } else {
+                    "Calendar review opened. Date or time was uncertain, so confirm and complete the fields before saving."
+                }
             } catch (_: ActivityNotFoundException) {
                 "No calendar app is available on this device."
             }
@@ -250,7 +280,9 @@ private fun HoldUpApp(content: SharedContent) {
                             analysisState = AnalysisState.Ready
                         }
                     )
-                    is AnalysisState.Error -> ErrorCard(state.message) { analysisState = AnalysisState.Ready }
+                    is AnalysisState.Error -> ErrorCard(state.message) {
+                        analysisState = AnalysisState.Ready
+                    }
                 }
                 actionMessage?.let {
                     Spacer(Modifier.height(14.dp))
@@ -274,12 +306,20 @@ private fun IntakeCard(content: SharedContent, onAnalyze: () -> Unit) {
                     Text("Shared text", style = MaterialTheme.typography.titleLarge)
                     Spacer(Modifier.height(8.dp))
                     Text(content.value.take(600))
-                    if (content.value.length > 600) Text("Preview shortened for review.", style = MaterialTheme.typography.labelMedium)
+                    if (content.value.length > 600) {
+                        Text("Preview shortened for review.", style = MaterialTheme.typography.labelMedium)
+                    }
                 }
                 is SharedContent.File -> {
                     Text("Shared file ready", style = MaterialTheme.typography.titleLarge)
                     Text(if (content.mimeType == "application/pdf") "PDF document" else "Image")
-                    Text(if (content.mimeType.startsWith("image/")) "HOLD UP can read visible Latin-script text locally." else "PDF text extraction is not connected yet.")
+                    Text(
+                        if (content.mimeType.startsWith("image/")) {
+                            "HOLD UP can read visible Latin-script text locally."
+                        } else {
+                            "PDF text extraction is not connected yet."
+                        }
+                    )
                 }
                 is SharedContent.Unsupported -> {
                     Text("This format is not supported", style = MaterialTheme.typography.titleLarge)
@@ -302,7 +342,9 @@ private fun IntakeCard(content: SharedContent, onAnalyze: () -> Unit) {
 @Composable
 private fun ActionButton(label: String, onClick: () -> Unit, enabled: Boolean = true) {
     Spacer(Modifier.height(20.dp))
-    Button(onClick = onClick, enabled = enabled, modifier = Modifier.fillMaxWidth()) { Text(label) }
+    Button(onClick = onClick, enabled = enabled, modifier = Modifier.fillMaxWidth()) {
+        Text(label)
+    }
 }
 
 @Composable
@@ -326,7 +368,9 @@ private fun ErrorCard(message: String, onTryAgain: () -> Unit) {
             Spacer(Modifier.height(8.dp))
             Text(message)
             Spacer(Modifier.height(20.dp))
-            OutlinedButton(onClick = onTryAgain, modifier = Modifier.fillMaxWidth()) { Text("Review shared item") }
+            OutlinedButton(onClick = onTryAgain, modifier = Modifier.fillMaxWidth()) {
+                Text("Review shared item")
+            }
         }
     }
 }
@@ -352,18 +396,29 @@ private fun AnalysisCard(
             if (analysis.evidence.isNotEmpty()) {
                 Spacer(Modifier.height(16.dp))
                 Text("Why HOLD UP flagged this", style = MaterialTheme.typography.titleSmall)
-                analysis.evidence.forEach { Text("• $it", modifier = Modifier.padding(top = 6.dp)) }
+                analysis.evidence.forEach {
+                    Text("• $it", modifier = Modifier.padding(top = 6.dp))
+                }
             }
             Spacer(Modifier.height(20.dp))
-            Button(onClick = onPrimaryAction, modifier = Modifier.fillMaxWidth()) { Text(analysis.primaryAction) }
+            Button(onClick = onPrimaryAction, modifier = Modifier.fillMaxWidth()) {
+                Text(analysis.primaryAction)
+            }
             Spacer(Modifier.height(10.dp))
             Row(modifier = Modifier.fillMaxWidth()) {
-                OutlinedButton(onClick = {}, modifier = Modifier.weight(1f)) { Text(analysis.secondaryAction) }
+                OutlinedButton(onClick = {}, modifier = Modifier.weight(1f)) {
+                    Text(analysis.secondaryAction)
+                }
                 Spacer(Modifier.width(10.dp))
-                OutlinedButton(onClick = onReviewAgain, modifier = Modifier.weight(1f)) { Text("Review again") }
+                OutlinedButton(onClick = onReviewAgain, modifier = Modifier.weight(1f)) {
+                    Text("Review again")
+                }
             }
             Spacer(Modifier.height(14.dp))
-            Text("First-pass guidance only. HOLD UP does not save calendar events without your confirmation.", style = MaterialTheme.typography.bodySmall)
+            Text(
+                "First-pass guidance only. HOLD UP does not save calendar events without your confirmation.",
+                style = MaterialTheme.typography.bodySmall
+            )
         }
     }
 }
