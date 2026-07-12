@@ -1,0 +1,21 @@
+{
+  "id": "./",
+  "name": "HOLD UP",
+  "short_name": "HOLD UP",
+  "description": "Turn screenshots, messages, bills, and email into warnings, reminders, recurring obligations, subscription controls, and safe next actions.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#07111f",
+  "theme_color": "#07111f",
+  "orientation": "portrait-primary",
+  "categories": ["productivity", "finance", "utilities"],
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
