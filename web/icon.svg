@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="HOLD UP app icon">
+  <defs>
+    <linearGradient id="bg" x1="64" y1="32" x2="448" y2="480" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#102845"/>
+      <stop offset="1" stop-color="#07111F"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="152" y1="132" x2="368" y2="388" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#93F4D8"/>
+      <stop offset="1" stop-color="#43CBA6"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="132" fill="url(#bg)"/>
+  <path d="M256 92c90 0 164 73 164 164s-74 164-164 164S92 347 92 256 166 92 256 92Z" fill="none" stroke="#244869" stroke-width="20"/>
+  <path d="M186 164v184h46v-70h48v70h46V164h-46v70h-48v-70h-46Z" fill="url(#accent)"/>
+  <circle cx="380" cy="132" r="34" fill="#FFBF69"/>
+  <path d="M380 114v22M380 148v2" stroke="#261600" stroke-width="12" stroke-linecap="round"/>
+</svg>
