@@ -121,6 +121,8 @@ private fun HoldUpApp(content: SharedContent) {
     var state by remember(content) { mutableStateOf<AnalysisState>(AnalysisState.Ready) }
     var message by remember(content) { mutableStateOf<String?>(null) }
     val context = LocalContext.current
+    val billStore = remember(context) { BillStore(context) }
+    var savedBills by remember(context) { mutableStateOf(billStore.load()) }
 
     fun analyze() {
         message = null
@@ -201,12 +203,15 @@ private fun HoldUpApp(content: SharedContent) {
                         current.draft,
                         onBack = { state = AnalysisState.Ready; message = null },
                         onConfirmed = { reviewed ->
-                            message = buildString {
-                                append("Bill details confirmed: ${reviewed.merchant}")
-                                reviewed.amountDisplay()?.let { append(" · $it") }
-                                append(" · due day ${reviewed.dueDay} · ${reviewed.cadence?.displayName}.")
-                                append(" No reminder or recurring record was saved yet.")
-                            }
+                            runCatching { billStore.save(reviewed) }
+                                .onSuccess { saved ->
+                                    savedBills = billStore.load()
+                                    state = AnalysisState.Ready
+                                    message = "${saved.merchant} was saved privately on this device. No payment or reminder was created."
+                                }
+                                .onFailure {
+                                    message = "HOLD UP could not save this bill securely. No record was created."
+                                }
                         }
                     )
                     is AnalysisState.Error -> ErrorCard(current.message) { state = AnalysisState.Ready }
@@ -214,6 +219,14 @@ private fun HoldUpApp(content: SharedContent) {
                 message?.let {
                     Spacer(Modifier.height(14.dp))
                     Text(it, style = MaterialTheme.typography.bodySmall)
+                }
+                if (savedBills.isNotEmpty()) {
+                    Spacer(Modifier.height(24.dp))
+                    SavedBillsCard(savedBills) { id ->
+                        billStore.delete(id)
+                        savedBills = billStore.load()
+                        message = "Saved bill removed from this device."
+                    }
                 }
             }
         }
@@ -309,7 +322,7 @@ private fun BillReviewCard(initial: BillDraft, onBack: () -> Unit, onConfirmed: 
         Column(Modifier.padding(20.dp)) {
             Text("Review recurring bill", style = MaterialTheme.typography.titleLarge)
             Spacer(Modifier.height(8.dp))
-            Text("Correct anything HOLD UP misread. This step confirms details but does not save a bill or reminder.")
+            Text("Correct anything HOLD UP misread. Saving keeps an encrypted record on this device; it never schedules a payment.")
             Spacer(Modifier.height(18.dp))
             OutlinedTextField(merchant, { merchant = it }, label = { Text("Merchant") }, singleLine = true, modifier = Modifier.fillMaxWidth())
             Spacer(Modifier.height(12.dp))
@@ -330,15 +343,41 @@ private fun BillReviewCard(initial: BillDraft, onBack: () -> Unit, onConfirmed: 
             validation?.let { Spacer(Modifier.height(12.dp)); Text(it, style = MaterialTheme.typography.bodySmall) }
             Spacer(Modifier.height(20.dp))
             Button(onClick = {
-                reviewed()?.let {
-                    validation = "Details confirmed locally for this review."
-                    onConfirmed(it)
-                } ?: run {
+                reviewed()?.let(onConfirmed) ?: run {
                     validation = "Enter a merchant, valid due day, and supported cadence."
                 }
-            }, modifier = Modifier.fillMaxWidth()) { Text("Confirm details") }
+            }, modifier = Modifier.fillMaxWidth()) { Text("Save privately") }
             Spacer(Modifier.height(10.dp))
-            OutlinedButton(onBack, Modifier.fillMaxWidth()) { Text("Back without confirming") }
+            OutlinedButton(onBack, Modifier.fillMaxWidth()) { Text("Back without saving") }
+        }
+    }
+}
+
+@Composable
+private fun SavedBillsCard(bills: List<StoredBill>, onDelete: (String) -> Unit) {
+    Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp)) {
+        Column(Modifier.padding(20.dp)) {
+            Text("Saved bills", style = MaterialTheme.typography.titleLarge)
+            Spacer(Modifier.height(6.dp))
+            Text("Encrypted on this device. HOLD UP has not scheduled payments or reminders.", style = MaterialTheme.typography.bodySmall)
+            bills.sortedBy { it.dueDay }.forEach { bill ->
+                Spacer(Modifier.height(18.dp))
+                Text(bill.merchant, style = MaterialTheme.typography.titleMedium)
+                Text(buildString {
+                    bill.amountDisplay()?.let { append("$it · ") }
+                    append("Due day ${bill.dueDay} · ${bill.cadence.displayName}")
+                })
+                Text(
+                    when (bill.autopayEnabled) {
+                        true -> "Autopay reported on"
+                        false -> "Autopay reported off"
+                        null -> "Autopay not confirmed"
+                    },
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Spacer(Modifier.height(8.dp))
+                OutlinedButton({ onDelete(bill.id) }) { Text("Remove from device") }
+            }
         }
     }
 }
