@@ -2,6 +2,7 @@ package com.holdup.app
 
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -54,12 +55,20 @@ private fun Intent.toSharedContent(): SharedContent {
     }
 
     if (incomingType?.startsWith("image/") == true || incomingType == "application/pdf") {
-        val uri = getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
+        val uri = sharedStreamUri()
         return if (uri == null) SharedContent.Unsupported(incomingType) else SharedContent.File(uri, incomingType)
     }
 
     return SharedContent.Unsupported(incomingType)
 }
+
+@Suppress("DEPRECATION")
+private fun Intent.sharedStreamUri(): Uri? =
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
+    } else {
+        getParcelableExtra(Intent.EXTRA_STREAM)
+    }
 
 @androidx.compose.runtime.Composable
 private fun HoldUpApp(content: SharedContent) {
