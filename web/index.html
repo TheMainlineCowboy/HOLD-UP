@@ -35,6 +35,7 @@
           <span><strong>Paste text or link</strong><small>Messages, offers, bills, and notices</small></span>
         </button>
       </div>
+      <p class="privacy-note" id="privacyStatus" role="status">Your analyses stay in private storage on this device and remain available offline.</p>
     </section>
 
     <section class="dashboard" aria-labelledby="attention-title">
@@ -86,11 +87,12 @@
       <label for="contentInput">Message, bill, email text, or link</label>
       <textarea id="contentInput" rows="8" placeholder="Paste the content here…"></textarea>
       <button class="primary-button compact" id="analyzeButton" value="cancel" type="button">Analyze content</button>
-      <p class="privacy-note">Prototype only. Nothing entered here is sent anywhere.</p>
+      <p class="privacy-note">Nothing entered here is sent anywhere.</p>
     </form>
   </dialog>
 
   <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
   <script src="app.js" defer></script>
+  <script src="offline.js" defer></script>
 </body>
 </html>
