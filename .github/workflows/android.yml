@@ -10,6 +10,7 @@ on:
     paths:
       - "android/**"
       - ".github/workflows/android.yml"
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -46,6 +47,9 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "9.4.1"
+
+      - name: Run classifier unit tests
+        run: gradle --no-daemon --stacktrace :app:testDebugUnitTest
 
       - name: Run lint and build debug APK
         run: gradle --no-daemon --stacktrace :app:lintDebug :app:assembleDebug
