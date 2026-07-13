@@ -5,6 +5,10 @@
         android:label="HOLD UP"
         android:supportsRtl="true">
         <activity
+            android:name=".SubscriptionReviewActivity"
+            android:exported="false" />
+
+        <activity
             android:name=".PdfReviewActivity"
             android:exported="true">
             <intent-filter>
