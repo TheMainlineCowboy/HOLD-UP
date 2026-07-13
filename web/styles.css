@@ -26,6 +26,7 @@ body {
 button, textarea, input { font: inherit; }
 button, a { -webkit-tap-highlight-color: transparent; }
 button { cursor: pointer; }
+button:disabled { cursor: not-allowed; opacity: .45; }
 button:focus-visible, a:focus-visible, textarea:focus-visible {
   outline: 3px solid rgba(108,229,193,.95);
   outline-offset: 3px;
@@ -143,6 +144,12 @@ label { display: block; margin-bottom: 8px; color: #cbd7e3; font-size: .82rem; f
 textarea { width: 100%; resize: vertical; min-height: 180px; padding: 15px; border: 1px solid var(--line); border-radius: 17px; color: var(--text); background: #081321; line-height: 1.5; }
 .primary-button.compact { justify-content: center; margin-top: 14px; text-align: center; }
 .privacy-note { margin: 12px 0 0; color: var(--muted); font-size: .74rem; text-align: center; }
+.privacy-explainer { color: #b7c7d6; line-height: 1.6; }
+.privacy-detail-list { display: grid; gap: 10px; margin: 18px 0; }
+.privacy-detail-list div { display: flex; justify-content: space-between; gap: 18px; padding: 14px; border: 1px solid var(--line); border-radius: 16px; background: rgba(255,255,255,.035); }
+.privacy-detail-list span { color: var(--muted); font-size: .82rem; }
+.privacy-detail-list strong { text-align: right; font-size: .84rem; }
+.danger-button { width: 100%; min-height: 52px; border: 1px solid rgba(255,133,133,.34); border-radius: 17px; color: #ffd5d5; background: rgba(117,31,43,.28); font-weight: 850; }
 .toast {
   position: fixed; z-index: 20; left: 50%; bottom: calc(95px + env(safe-area-inset-bottom));
   transform: translateX(-50%); width: min(calc(100% - 32px),460px); padding: 13px 16px;
@@ -156,6 +163,8 @@ textarea { width: 100%; resize: vertical; min-height: 180px; padding: 15px; bord
   .action-card { grid-template-columns: 42px minmax(0,1fr); gap: 12px; padding: 15px; }
   .card-icon { width: 42px; height: 42px; }
   .card-actions, .summary-grid { grid-template-columns: 1fr; }
+  .privacy-detail-list div { align-items: flex-start; flex-direction: column; gap: 4px; }
+  .privacy-detail-list strong { text-align: left; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; animation: none !important; }

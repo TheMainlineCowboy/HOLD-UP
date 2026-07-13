@@ -30,6 +30,7 @@ jobs:
       - name: Validate JavaScript syntax
         run: |
           node --check web/app.js
+          node --check web/privacy.js
           node --check web/offline.js
           node --check web/sw.js
 
@@ -39,7 +40,7 @@ jobs:
           server_pid=$!
           trap 'kill "$server_pid"' EXIT
           sleep 1
-          for path in / /styles.css /app.js /offline.js /sw.js /manifest.webmanifest /icon.svg; do
+          for path in / /styles.css /app.js /privacy.js /offline.js /sw.js /manifest.webmanifest /icon.svg; do
             curl --fail --silent --show-error "http://127.0.0.1:4173${path}" >/dev/null
           done
 
