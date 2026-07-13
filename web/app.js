@@ -153,6 +153,100 @@
     }
   }
 
+  function parseCalendarDate(value, now = new Date()) {
+    if (!value) return null;
+    const normalized = value.trim().toLowerCase();
+    const localMidnight = (year, monthIndex, day) => {
+      const candidate = new Date(year, monthIndex, day);
+      return Number.isNaN(candidate.getTime()) || candidate.getFullYear() !== year || candidate.getMonth() !== monthIndex || candidate.getDate() !== day
+        ? null
+        : candidate;
+    };
+
+    if (normalized === 'today' || normalized === 'tonight') {
+      return localMidnight(now.getFullYear(), now.getMonth(), now.getDate());
+    }
+    if (normalized === 'tomorrow') {
+      const tomorrow = localMidnight(now.getFullYear(), now.getMonth(), now.getDate());
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      return tomorrow;
+    }
+
+    const numeric = normalized.match(/^(\d{1,2})[/-](\d{1,2})(?:[/-](\d{2,4}))?$/);
+    if (numeric) {
+      let year = numeric[3] ? Number(numeric[3]) : now.getFullYear();
+      if (year < 100) year += 2000;
+      let candidate = localMidnight(year, Number(numeric[1]) - 1, Number(numeric[2]));
+      if (candidate && !numeric[3] && candidate < localMidnight(now.getFullYear(), now.getMonth(), now.getDate())) {
+        candidate = localMidnight(year + 1, Number(numeric[1]) - 1, Number(numeric[2]));
+      }
+      return candidate;
+    }
+
+    const named = normalized.match(/^([a-z]+)\s+(\d{1,2})(?:,?\s+(\d{4}))?$/i);
+    if (named) {
+      const monthIndex = ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december']
+        .findIndex((month) => month.startsWith(named[1].slice(0, 3)));
+      if (monthIndex < 0) return null;
+      const explicitYear = Boolean(named[3]);
+      let year = explicitYear ? Number(named[3]) : now.getFullYear();
+      let candidate = localMidnight(year, monthIndex, Number(named[2]));
+      if (candidate && !explicitYear && candidate < localMidnight(now.getFullYear(), now.getMonth(), now.getDate())) {
+        candidate = localMidnight(year + 1, monthIndex, Number(named[2]));
+      }
+      return candidate;
+    }
+
+    return null;
+  }
+
+  function formatIcsDate(date) {
+    return `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, '0')}${String(date.getDate()).padStart(2, '0')}`;
+  }
+
+  function escapeIcsText(value) {
+    return value.replace(/\\/g, '\\\\').replace(/\n/g, '\\n').replace(/,/g, '\\,').replace(/;/g, '\\;');
+  }
+
+  function downloadCalendarDraft(result) {
+    const date = parseCalendarDate(result.date);
+    if (!date) {
+      showToast('Add a specific date before creating a calendar reminder. Nothing was changed.');
+      return;
+    }
+
+    const endDate = new Date(date);
+    endDate.setDate(endDate.getDate() + 1);
+    const summary = result.kicker === 'Bill or invoice' ? `Review bill${result.amount ? ` ${result.amount}` : ''}` : result.title;
+    const description = `${result.summary}\n\nCreated as a review draft by HOLD UP. Confirm the original details before acting.`;
+    const calendar = [
+      'BEGIN:VCALENDAR',
+      'VERSION:2.0',
+      'PRODID:-//HOLD UP//Private calendar draft//EN',
+      'CALSCALE:GREGORIAN',
+      'METHOD:PUBLISH',
+      'BEGIN:VEVENT',
+      `UID:${Date.now()}-${Math.random().toString(36).slice(2)}@hold-up.local`,
+      `DTSTAMP:${new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z')}`,
+      `DTSTART;VALUE=DATE:${formatIcsDate(date)}`,
+      `DTEND;VALUE=DATE:${formatIcsDate(endDate)}`,
+      `SUMMARY:${escapeIcsText(summary)}`,
+      `DESCRIPTION:${escapeIcsText(description)}`,
+      'END:VEVENT',
+      'END:VCALENDAR'
+    ].join('\r\n');
+
+    const url = URL.createObjectURL(new Blob([calendar], { type: 'text/calendar;charset=utf-8' }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `hold-up-${formatIcsDate(date)}.ics`;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 0);
+    showToast('Calendar draft created locally. Review it before saving in your calendar app.');
+  }
+
   function createAnalysisCard(result) {
     const card = document.createElement('article');
     card.className = `action-card ${result.category === 'risk' ? 'warning-card' : 'bill-card'}`;
@@ -182,7 +276,17 @@
     const primary = document.createElement('button');
     primary.type = 'button';
     primary.textContent = result.primaryAction;
-    primary.addEventListener('click', () => showToast(`${result.primaryAction} is saved as the next product workflow to complete.`));
+    primary.addEventListener('click', () => {
+      if (['Add to calendar', 'Set reminder', 'Track renewal'].includes(result.primaryAction)) {
+        downloadCalendarDraft(result);
+        return;
+      }
+      if (result.primaryAction === 'Keep for reference') {
+        showToast('This analysis is already stored privately in this browser.');
+        return;
+      }
+      showToast(`${result.primaryAction} is not connected yet. HOLD UP made no device changes.`);
+    });
 
     const secondary = document.createElement('button');
     secondary.type = 'button';
@@ -192,7 +296,7 @@
       if (result.secondaryAction === 'Analyze another') {
         pasteButton.click();
       } else {
-        showToast('Details saved privately on this device.');
+        showToast('This analysis is already stored privately in this browser.');
       }
     });
 
