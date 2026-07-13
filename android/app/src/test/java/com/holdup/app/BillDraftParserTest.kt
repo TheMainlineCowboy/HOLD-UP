@@ -1,5 +1,6 @@
 package com.holdup.app
 
+import java.time.LocalDate
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -13,7 +14,7 @@ class BillDraftParserTest {
             """
             Provider: APS
             Amount due: $148.27
-            Due date: July 4
+            Due date: July 4, 2026
             Billed monthly
             Autopay: enabled
             """.trimIndent()
@@ -23,8 +24,44 @@ class BillDraftParserTest {
         assertEquals(14_827L, draft.amountCents)
         assertEquals("$148.27", draft.amountDisplay())
         assertEquals(4, draft.dueDay)
+        assertEquals(LocalDate.of(2026, 7, 4), draft.firstDueDate)
         assertEquals(BillCadence.MONTHLY, draft.cadence)
         assertEquals(true, draft.autopayEnabled)
+        assertTrue(draft.isReadyToSave)
+    }
+
+    @Test
+    fun parsesNumericAndIsoExactDates() {
+        val numeric = BillDraftParser.parse("Provider: Water\nDue date: 02/29/2028\nYearly")
+        val iso = BillDraftParser.parse("Provider: Internet\nDue date: 2026-08-15\nMonthly")
+
+        assertEquals(LocalDate.of(2028, 2, 29), numeric.firstDueDate)
+        assertEquals(29, numeric.dueDay)
+        assertEquals(LocalDate.of(2026, 8, 15), iso.firstDueDate)
+        assertEquals(15, iso.dueDay)
+    }
+
+    @Test
+    fun rejectsImpossibleExactDate() {
+        val draft = BillDraftParser.parse(
+            """
+            Provider: City Water
+            Due date: February 30, 2026
+            Monthly service
+            """.trimIndent()
+        )
+
+        assertNull(draft.firstDueDate)
+        assertEquals(30, draft.dueDay)
+        assertFalse("first due date" in draft.detectedFields)
+    }
+
+    @Test
+    fun keepsYearlessDatesAsUnanchoredDueDays() {
+        val draft = BillDraftParser.parse("Provider: APS\nDue date: July 4\nBilled monthly")
+
+        assertNull(draft.firstDueDate)
+        assertEquals(4, draft.dueDay)
         assertTrue(draft.isReadyToSave)
     }
 
