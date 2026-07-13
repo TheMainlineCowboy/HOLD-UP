@@ -26,6 +26,32 @@ object BillOccurrenceGenerator {
         }
     }
 
+    /**
+     * Generates a series from a concrete reviewed due date.
+     *
+     * This is the preferred API for persisted schedules because weekly bills retain their
+     * weekday and month-based bills retain their intended day-of-month across short months.
+     */
+    fun generateFrom(
+        anchorDate: LocalDate,
+        cadence: BillCadence,
+        count: Int
+    ): List<BillOccurrence> {
+        require(count in 1..60) { "Occurrence count must be between 1 and 60." }
+
+        return when (cadence) {
+            BillCadence.WEEKLY -> List(count) { offset ->
+                BillOccurrence(
+                    dueDate = anchorDate.plusWeeks(offset.toLong()),
+                    adjustedForShortMonth = false
+                )
+            }
+            BillCadence.MONTHLY -> monthBasedFromAnchor(anchorDate, count, 1)
+            BillCadence.QUARTERLY -> monthBasedFromAnchor(anchorDate, count, 3)
+            BillCadence.YEARLY -> monthBasedFromAnchor(anchorDate, count, 12)
+        }
+    }
+
     fun monthly(
         dueDay: Int,
         firstMonth: YearMonth,
@@ -58,6 +84,19 @@ object BillOccurrenceGenerator {
         BillOccurrence(
             dueDate = month.atDay(resolvedDay),
             adjustedForShortMonth = resolvedDay != dueDay
+        )
+    }
+
+    private fun monthBasedFromAnchor(
+        anchorDate: LocalDate,
+        count: Int,
+        monthStep: Long
+    ): List<BillOccurrence> = List(count) { offset ->
+        val targetMonth = YearMonth.from(anchorDate).plusMonths(offset * monthStep)
+        val resolvedDay = anchorDate.dayOfMonth.coerceAtMost(targetMonth.lengthOfMonth())
+        BillOccurrence(
+            dueDate = targetMonth.atDay(resolvedDay),
+            adjustedForShortMonth = resolvedDay != anchorDate.dayOfMonth
         )
     }
 }
