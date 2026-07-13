@@ -55,17 +55,90 @@ class SubscriptionReviewActivity : ComponentActivity() {
         )
         val store = SubscriptionStore(this)
         setContent {
-            SubscriptionReviewScreen(
-                initial = initial,
-                onSave = { review -> store.save(review); finish() },
-                onDiscard = ::finish
-            )
+            var outcome by remember { mutableStateOf<SaveOutcome?>(null) }
+            when (val current = outcome) {
+                null -> SubscriptionReviewScreen(
+                    initial = initial,
+                    onSave = { review ->
+                        outcome = runCatching {
+                            store.save(review)
+                            SaveOutcome.Success(review.merchant)
+                        }.getOrElse { SaveOutcome.Failure }
+                    },
+                    onDiscard = ::finish
+                )
+                is SaveOutcome.Success -> SubscriptionSaveConfirmation(
+                    merchant = current.merchant,
+                    onDone = ::finish
+                )
+                SaveOutcome.Failure -> SubscriptionSaveFailure(
+                    onTryAgain = { outcome = null },
+                    onClose = ::finish
+                )
+            }
         }
     }
 
     companion object {
         const val EXTRA_SOURCE_TEXT = "com.holdup.app.extra.SUBSCRIPTION_SOURCE_TEXT"
         const val EXTRA_SOURCE_LABEL = "com.holdup.app.extra.SUBSCRIPTION_SOURCE_LABEL"
+    }
+}
+
+private sealed interface SaveOutcome {
+    data class Success(val merchant: String) : SaveOutcome
+    data object Failure : SaveOutcome
+}
+
+@Composable
+private fun SubscriptionSaveConfirmation(merchant: String, onDone: () -> Unit) {
+    MaterialTheme {
+        Surface(Modifier.fillMaxSize()) {
+            Column(
+                Modifier
+                    .verticalScroll(rememberScrollState())
+                    .padding(24.dp)
+            ) {
+                Text("HOLD UP", style = MaterialTheme.typography.labelLarge)
+                Spacer(Modifier.height(8.dp))
+                Text("Saved privately", style = MaterialTheme.typography.headlineMedium)
+                Spacer(Modifier.height(20.dp))
+                Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp)) {
+                    Column(Modifier.padding(20.dp)) {
+                        Text(merchant, style = MaterialTheme.typography.titleLarge)
+                        Spacer(Modifier.height(8.dp))
+                        Text("This subscription record is encrypted with Android Keystore and stored only on this device.")
+                        Spacer(Modifier.height(12.dp))
+                        Text("No charge, cancellation, reminder, or calendar event was created.", style = MaterialTheme.typography.bodySmall)
+                        Spacer(Modifier.height(20.dp))
+                        Button(onDone, Modifier.fillMaxWidth()) { Text("Done") }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SubscriptionSaveFailure(onTryAgain: () -> Unit, onClose: () -> Unit) {
+    MaterialTheme {
+        Surface(Modifier.fillMaxSize()) {
+            Column(Modifier.padding(24.dp)) {
+                Text("HOLD UP", style = MaterialTheme.typography.labelLarge)
+                Spacer(Modifier.height(8.dp))
+                Text("Could not save securely", style = MaterialTheme.typography.headlineMedium)
+                Spacer(Modifier.height(20.dp))
+                Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp)) {
+                    Column(Modifier.padding(20.dp)) {
+                        Text("No subscription record was created. Your device may have temporarily rejected access to its encryption key.")
+                        Spacer(Modifier.height(20.dp))
+                        Button(onTryAgain, Modifier.fillMaxWidth()) { Text("Review and try again") }
+                        Spacer(Modifier.height(10.dp))
+                        OutlinedButton(onClose, Modifier.fillMaxWidth()) { Text("Close without saving") }
+                    }
+                }
+            }
+        }
     }
 }
 
