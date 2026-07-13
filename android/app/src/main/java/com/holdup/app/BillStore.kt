@@ -56,9 +56,11 @@ class BillStore(context: Context) {
                             cadence = cadence,
                             autopayEnabled = if (item.isNull("autopayEnabled")) null else item.getBoolean("autopayEnabled"),
                             createdAtEpochMillis = item.getLong("createdAtEpochMillis"),
-                            firstDueDate = item.optString("firstDueDate")
-                                .takeIf { it.isNotBlank() }
-                                ?.let(LocalDate::parse)
+                            firstDueDate = if (item.isNull("firstDueDate")) {
+                                null
+                            } else {
+                                item.optString("firstDueDate").takeIf { it.isNotBlank() }?.let(LocalDate::parse)
+                            }
                         )
                     )
                 }
