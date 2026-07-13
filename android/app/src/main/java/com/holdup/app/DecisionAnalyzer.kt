@@ -77,6 +77,17 @@ object DecisionAnalyzer {
             credentials.isNotEmpty() || payments.isNotEmpty() -> DecisionResult("Possible scam or account takeover", DecisionRisk.HIGH, "Pause before responding", "Do not use the supplied link or share a code. Contact the organization through an independently verified channel.", evidence, "Verify safely", "Save evidence")
             pressure.isNotEmpty() && hasLink -> DecisionResult("Suspicious request", DecisionRisk.MEDIUM, "Verify the sender independently", "Urgency plus a link can push a rushed decision. Open the official service directly instead.", evidence, "Verify safely", "Ask someone trusted")
             subscriptions.isNotEmpty() || priceChanges.isNotEmpty() || cancellationDeadlines.isNotEmpty() -> {
+                val draft = SubscriptionDraftParser.parse(rawText)
+                draft.previousAmountDisplay()?.let { previous ->
+                    draft.amountDisplay()?.let { current -> evidence += "Price appears to change from $previous to $current" }
+                }
+                draft.amountDisplay()?.let { amount ->
+                    val cadence = draft.cadence?.displayName?.lowercase()?.let { " $it" }.orEmpty()
+                    evidence += "Detected charge: $amount$cadence"
+                }
+                draft.annualizedDisplay()?.let { evidence += "Estimated recurring total: $it" }
+                draft.nextChargeOrDeadline?.let { evidence += "Detected charge or cancellation date: $it" }
+
                 val headline = when {
                     priceChanges.isNotEmpty() -> "Review the new subscription price"
                     cancellationDeadlines.isNotEmpty() -> "Review the cancellation deadline"
@@ -87,7 +98,7 @@ object DecisionAnalyzer {
                     DecisionRisk.LOW,
                     headline,
                     "Confirm the next charge, billing cadence, price, and cancellation deadline before deciding what to do.",
-                    evidence.ifEmpty { listOf("Mentions recurring service or renewal language") },
+                    evidence.distinct().ifEmpty { listOf("Mentions recurring service or renewal language") },
                     "Track renewal",
                     "Find cancellation path"
                 )
