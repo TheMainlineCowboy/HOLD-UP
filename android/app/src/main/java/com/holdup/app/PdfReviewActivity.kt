@@ -44,7 +44,14 @@ class PdfReviewActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent { PdfReviewScreen(uiState, ::startAnalysis, ::finish) }
+        setContent {
+            PdfReviewScreen(
+                state = uiState,
+                onRetry = ::startAnalysis,
+                onContinue = ::continueToActions,
+                onClose = ::finish
+            )
+        }
         startAnalysis()
     }
 
@@ -71,7 +78,10 @@ class PdfReviewActivity : ComponentActivity() {
             onProgress = { page, total -> uiState = PdfUiState.Reading(page, total) },
             onSuccess = { result ->
                 activeSession = null
-                uiState = PdfUiState.Complete(result)
+                uiState = PdfUiState.Complete(
+                    result = result,
+                    analysis = DecisionAnalyzer.analyze(result.text)
+                )
             },
             onError = { message ->
                 activeSession = null
@@ -79,12 +89,28 @@ class PdfReviewActivity : ComponentActivity() {
             }
         ).also(PdfOcrSession::start)
     }
+
+    private fun continueToActions(text: String) {
+        startActivity(
+            Intent(this, MainActivity::class.java).apply {
+                action = Intent.ACTION_SEND
+                type = "text/plain"
+                putExtra(Intent.EXTRA_TEXT, text)
+                putExtra(EXTRA_SOURCE_LABEL, "Text found in shared PDF")
+            }
+        )
+        finish()
+    }
+
+    companion object {
+        const val EXTRA_SOURCE_LABEL = "com.holdup.app.extra.SOURCE_LABEL"
+    }
 }
 
 private sealed interface PdfUiState {
     data object Loading : PdfUiState
     data class Reading(val page: Int, val total: Int) : PdfUiState
-    data class Complete(val result: PdfOcrResult) : PdfUiState
+    data class Complete(val result: PdfOcrResult, val analysis: DecisionResult) : PdfUiState
     data class Error(val message: String) : PdfUiState
 }
 
@@ -230,6 +256,7 @@ private fun Intent.sharedPdfUri(): Uri? {
 private fun PdfReviewScreen(
     state: PdfUiState,
     onRetry: () -> Unit,
+    onContinue: (String) -> Unit,
     onClose: () -> Unit
 ) {
     MaterialTheme {
@@ -244,7 +271,7 @@ private fun PdfReviewScreen(
                 Spacer(Modifier.height(10.dp))
                 Text("Review this PDF privately", style = MaterialTheme.typography.headlineMedium)
                 Spacer(Modifier.height(12.dp))
-                Text("Pages are rendered and read on this device. The PDF is not uploaded or retained by this screen.")
+                Text("Pages are rendered, read, and classified on this device. The PDF is not uploaded or retained by this screen.")
                 Spacer(Modifier.height(24.dp))
 
                 Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp)) {
@@ -263,8 +290,21 @@ private fun PdfReviewScreen(
                                 Text("Only the first ${PdfTextPolicy.MAX_PAGES} pages are read to limit memory use and processing time.")
                             }
                             is PdfUiState.Complete -> {
-                                Text("Text found", style = MaterialTheme.typography.titleLarge)
+                                Text(state.analysis.risk.label, style = MaterialTheme.typography.labelLarge)
+                                Spacer(Modifier.height(6.dp))
+                                Text(state.analysis.category, style = MaterialTheme.typography.titleMedium)
                                 Spacer(Modifier.height(8.dp))
+                                Text(state.analysis.headline, style = MaterialTheme.typography.headlineSmall)
+                                Spacer(Modifier.height(10.dp))
+                                Text(state.analysis.explanation)
+                                if (state.analysis.evidence.isNotEmpty()) {
+                                    Spacer(Modifier.height(16.dp))
+                                    Text("Why HOLD UP flagged this", style = MaterialTheme.typography.titleSmall)
+                                    state.analysis.evidence.forEach { evidence ->
+                                        Text("• $evidence", Modifier.padding(top = 6.dp))
+                                    }
+                                }
+                                Spacer(Modifier.height(16.dp))
                                 Text(
                                     if (state.result.wasLimited) {
                                         "Read ${state.result.pagesRead} of ${state.result.totalPages} pages. Review the original PDF for anything beyond that limit."
@@ -273,14 +313,22 @@ private fun PdfReviewScreen(
                                     },
                                     style = MaterialTheme.typography.bodySmall
                                 )
-                                Spacer(Modifier.height(16.dp))
-                                Text(state.result.text.take(8_000))
-                                if (state.result.text.length > 8_000) {
-                                    Spacer(Modifier.height(10.dp))
-                                    Text("Preview shortened. The extracted text was limited for a safer review experience.", style = MaterialTheme.typography.bodySmall)
-                                }
                                 Spacer(Modifier.height(20.dp))
-                                Button(onClick = onClose, modifier = Modifier.fillMaxWidth()) { Text("Done") }
+                                Button(
+                                    onClick = { onContinue(state.result.text) },
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text("Continue to safe actions")
+                                }
+                                Spacer(Modifier.height(10.dp))
+                                OutlinedButton(onClick = onClose, modifier = Modifier.fillMaxWidth()) {
+                                    Text("Close without saving")
+                                }
+                                Spacer(Modifier.height(14.dp))
+                                Text(
+                                    "Nothing is saved or scheduled until you review and confirm an action.",
+                                    style = MaterialTheme.typography.bodySmall
+                                )
                             }
                             is PdfUiState.Error -> {
                                 Text("Could not read this PDF", style = MaterialTheme.typography.titleLarge)
