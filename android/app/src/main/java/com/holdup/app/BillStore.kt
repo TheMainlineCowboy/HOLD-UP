@@ -7,6 +7,7 @@ import android.util.Base64
 import org.json.JSONArray
 import org.json.JSONObject
 import java.security.KeyStore
+import java.time.LocalDate
 import java.util.UUID
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
@@ -20,7 +21,8 @@ data class StoredBill(
     val dueDay: Int,
     val cadence: BillCadence,
     val autopayEnabled: Boolean?,
-    val createdAtEpochMillis: Long
+    val createdAtEpochMillis: Long,
+    val firstDueDate: LocalDate? = null
 ) {
     fun amountDisplay(): String? = BillDraft(
         merchant = merchant,
@@ -28,7 +30,8 @@ data class StoredBill(
         dueDay = dueDay,
         cadence = cadence,
         autopayEnabled = autopayEnabled,
-        detectedFields = emptySet()
+        detectedFields = emptySet(),
+        firstDueDate = firstDueDate
     ).amountDisplay()
 }
 
@@ -52,7 +55,10 @@ class BillStore(context: Context) {
                             dueDay = item.getInt("dueDay"),
                             cadence = cadence,
                             autopayEnabled = if (item.isNull("autopayEnabled")) null else item.getBoolean("autopayEnabled"),
-                            createdAtEpochMillis = item.getLong("createdAtEpochMillis")
+                            createdAtEpochMillis = item.getLong("createdAtEpochMillis"),
+                            firstDueDate = item.optString("firstDueDate")
+                                .takeIf { it.isNotBlank() }
+                                ?.let(LocalDate::parse)
                         )
                     )
                 }
@@ -69,7 +75,8 @@ class BillStore(context: Context) {
             dueDay = requireNotNull(draft.dueDay),
             cadence = requireNotNull(draft.cadence),
             autopayEnabled = draft.autopayEnabled,
-            createdAtEpochMillis = System.currentTimeMillis()
+            createdAtEpochMillis = System.currentTimeMillis(),
+            firstDueDate = draft.firstDueDate
         )
         persist(load() + bill)
         return bill
@@ -95,6 +102,7 @@ class BillStore(context: Context) {
                     .put("cadence", bill.cadence.name)
                     .put("autopayEnabled", bill.autopayEnabled ?: JSONObject.NULL)
                     .put("createdAtEpochMillis", bill.createdAtEpochMillis)
+                    .put("firstDueDate", bill.firstDueDate?.toString() ?: JSONObject.NULL)
             )
         }
         preferences.edit().putString(BILLS_KEY, encrypt(array.toString())).apply()
