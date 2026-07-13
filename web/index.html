@@ -17,7 +17,7 @@
         <span class="brand-mark" aria-hidden="true">H</span>
         <span><strong>HOLD UP</strong><small>Think before you act.</small></span>
       </a>
-      <button class="icon-button" type="button" aria-label="Privacy and settings">•••</button>
+      <button class="icon-button" type="button" aria-label="Open privacy controls">•••</button>
     </header>
 
     <section class="hero" aria-labelledby="hero-title">
@@ -91,8 +91,26 @@
     </form>
   </dialog>
 
+  <dialog id="privacyDialog">
+    <form method="dialog" class="dialog-card privacy-panel">
+      <div class="dialog-heading">
+        <div><p class="eyebrow">Privacy controls</p><h2>Your data stays yours</h2></div>
+        <button class="icon-button" value="cancel" aria-label="Close privacy controls">×</button>
+      </div>
+      <p class="privacy-explainer">The web prototype processes pasted text in this browser. It does not connect to Gmail, upload files, or monitor your activity.</p>
+      <div class="privacy-detail-list">
+        <div><span>Saved locally</span><strong id="savedAnalysisCount">0 saved analyses</strong></div>
+        <div><span>Cloud account</span><strong>Not connected</strong></div>
+        <div><span>Background monitoring</span><strong>Off</strong></div>
+      </div>
+      <button class="danger-button" id="clearHistoryButton" type="button">Delete saved analysis history</button>
+      <p class="privacy-note">Deletion removes HOLD UP analysis history from this browser only and cannot be undone.</p>
+    </form>
+  </dialog>
+
   <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
   <script src="app.js" defer></script>
+  <script src="privacy.js" defer></script>
   <script src="offline.js" defer></script>
 </body>
 </html>
