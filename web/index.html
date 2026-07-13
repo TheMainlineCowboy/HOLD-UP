@@ -26,17 +26,30 @@
       <h1 id="hero-title">Share it. Understand it. Act safely.</h1>
       <p class="hero-copy">HOLD UP finds risks, bills, due dates, subscriptions, and the next useful action hidden inside screenshots, messages, links, and email.</p>
       <div class="primary-actions" aria-label="Start an analysis">
-        <button class="primary-button" id="uploadButton" type="button">
+        <button class="primary-button" id="uploadButton" type="button" aria-describedby="native-intake-note">
           <span class="action-icon" aria-hidden="true">↥</span>
-          <span><strong>Share or upload</strong><small>Screenshot, image, PDF, or link</small></span>
+          <span><strong>Choose image or PDF</strong><small>Native Android intake is required for OCR</small></span>
         </button>
         <input id="fileInput" type="file" accept="image/*,.pdf" hidden />
         <button class="secondary-button" id="pasteButton" type="button">
           <span class="action-icon" aria-hidden="true">⌁</span>
-          <span><strong>Paste text or link</strong><small>Messages, offers, bills, and notices</small></span>
+          <span><strong>Paste text or link</strong><small>Available now in this web prototype</small></span>
         </button>
       </div>
       <p class="privacy-note" id="privacyStatus" role="status">Your analyses stay in private storage on this device and remain available offline.</p>
+    </section>
+
+    <section class="summary-grid" aria-label="Platform capability overview">
+      <article>
+        <span class="summary-label">Web prototype</span>
+        <strong>Text and links</strong>
+        <small>Paste content for local analysis, save results in this browser, and create review-only calendar drafts.</small>
+      </article>
+      <article id="native-intake-note">
+        <span class="summary-label">Native Android</span>
+        <strong>Images and PDFs</strong>
+        <small>Use the Android Sharesheet for on-device OCR, PDF review, subscription tracking, and encrypted private records.</small>
+      </article>
     </section>
 
     <section class="dashboard" aria-labelledby="attention-title">
