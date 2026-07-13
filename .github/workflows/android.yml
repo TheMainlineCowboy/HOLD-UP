@@ -16,7 +16,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: android-${{ github.ref }}
+  group: android-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -48,11 +48,19 @@ jobs:
         with:
           gradle-version: "9.4.1"
 
-      - name: Run classifier unit tests
-        run: gradle --no-daemon --stacktrace :app:testDebugUnitTest
+      - name: Verify unit tests, lint, and debug APK
+        run: gradle --no-daemon --stacktrace --console=plain :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
 
-      - name: Run lint and build debug APK
-        run: gradle --no-daemon --stacktrace :app:lintDebug :app:assembleDebug
+      - name: Upload verification reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hold-up-android-verification-reports
+          path: |
+            android/app/build/reports/**
+            android/app/build/test-results/**
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Upload debug APK
         if: success()
