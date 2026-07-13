@@ -8,6 +8,7 @@
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="icon" href="icon.svg" type="image/svg+xml" />
   <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="history.css" />
   <title>HOLD UP</title>
 </head>
 <body>
@@ -40,28 +41,14 @@
 
     <section class="dashboard" aria-labelledby="attention-title">
       <div class="section-heading">
-        <div><p class="eyebrow">Today</p><h2 id="attention-title">Needs attention</h2></div>
-        <button class="text-button" type="button">View all</button>
+        <div><p class="eyebrow">Private inbox</p><h2 id="attention-title">Needs attention</h2></div>
+        <button class="text-button" id="viewAllAnalyses" type="button" hidden>View all</button>
       </div>
 
-      <article class="action-card warning-card">
-        <div class="card-icon" aria-hidden="true">!</div>
-        <div class="card-content">
-          <div class="card-kicker">Example analysis</div>
-          <h3>Payment request uses urgency</h3>
-          <p>Verify the sender independently before opening the link or sending money.</p>
-          <div class="card-actions"><button type="button">Verify safely</button><button class="ghost" type="button">Save evidence</button></div>
-        </div>
-      </article>
-
-      <article class="action-card bill-card">
-        <div class="card-icon" aria-hidden="true">4</div>
-        <div class="card-content">
-          <div class="card-kicker">Recurring bill</div>
-          <h3>APS · Due on the 4th</h3>
-          <p>Remember this date every month and remind me before it is due.</p>
-          <div class="card-actions"><button type="button">Create monthly reminder</button><button class="ghost" type="button">Edit details</button></div>
-        </div>
+      <article class="analysis-empty-state" id="analysisEmptyState">
+        <div class="empty-state-mark" aria-hidden="true">✓</div>
+        <h3>No saved analyses yet</h3>
+        <p>Paste text or a link to create your first private analysis. Nothing shown here is sample user data.</p>
       </article>
     </section>
 
@@ -110,6 +97,7 @@
 
   <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
   <script src="app.js" defer></script>
+  <script src="history.js" defer></script>
   <script src="privacy.js" defer></script>
   <script src="offline.js" defer></script>
 </body>
