@@ -83,13 +83,15 @@ class SubscriptionDraftParserTest {
     }
 
     @Test
-    fun expandsTwoDigitYearsDeterministically() {
+    fun rejectsAmbiguousTwoDigitYears() {
         val draft = SubscriptionDraftParser.parse(
             "Cloud Vault\nNext charge date: 8/14/27. Your subscription is $5.99 monthly.",
             referenceDate
         )
 
-        assertEquals(LocalDate.of(2027, 8, 14), draft.normalizedDate)
+        assertNull(draft.normalizedDate)
+        assertNull(draft.nextChargeOrDeadline)
+        assertNull(draft.dateIntent)
     }
 
     @Test
