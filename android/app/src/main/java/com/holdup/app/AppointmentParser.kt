@@ -6,6 +6,7 @@ import java.time.LocalTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.time.format.DateTimeParseException
+import java.time.format.ResolverStyle
 import java.util.Locale
 
 internal data class AppointmentDraft(
@@ -23,6 +24,9 @@ internal object AppointmentParser {
     private val numericDate = Regex("\\b(\\d{1,2})/(\\d{1,2})/(\\d{2,4})\\b")
     private val timePattern = Regex("\\b(\\d{1,2})(?::(\\d{2}))?\\s*(a\\.?m\\.?|p\\.?m\\.?)\\b", RegexOption.IGNORE_CASE)
     private val explicitLocation = Regex("(?:location|address)\\s*:\\s*([^\\n]{2,120})", RegexOption.IGNORE_CASE)
+    private val strictMonthFormatter = DateTimeFormatter
+        .ofPattern("MMMM d uuuu", Locale.US)
+        .withResolverStyle(ResolverStyle.STRICT)
 
     fun parse(
         sourceText: String,
@@ -52,9 +56,8 @@ internal object AppointmentParser {
             val month = match.groupValues[1]
             val day = match.groupValues[2]
             val year = match.groupValues[3].ifBlank { today.year.toString() }
-            val formatter = DateTimeFormatter.ofPattern("MMMM d uuuu", Locale.US)
             return try {
-                var parsed = LocalDate.parse("$month $day $year", formatter)
+                var parsed = LocalDate.parse("$month $day $year", strictMonthFormatter)
                 if (match.groupValues[3].isBlank() && parsed.isBefore(today)) parsed = parsed.plusYears(1)
                 parsed
             } catch (_: DateTimeParseException) {

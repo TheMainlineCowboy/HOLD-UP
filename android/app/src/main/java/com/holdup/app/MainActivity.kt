@@ -10,14 +10,11 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.weight
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -72,7 +69,11 @@ private sealed interface SharedContent {
 private sealed interface AnalysisState {
     data object Ready : AnalysisState
     data object Processing : AnalysisState
-    data class Complete(val analysis: DecisionResult, val sourceLabel: String, val sourceText: String) : AnalysisState
+    data class Complete(
+        val analysis: DecisionResult,
+        val sourceLabel: String,
+        val sourceText: String
+    ) : AnalysisState
     data class ReviewBill(val draft: BillDraft) : AnalysisState
     data class Error(val message: String) : AnalysisState
 }
@@ -128,7 +129,9 @@ private fun HoldUpApp(content: SharedContent) {
         message = null
         when (content) {
             is SharedContent.Text -> state = AnalysisState.Complete(
-                DecisionAnalyzer.analyze(content.value), "Shared text", content.value
+                DecisionAnalyzer.analyze(content.value),
+                "Shared text",
+                content.value
             )
             is SharedContent.File -> {
                 if (!content.mimeType.startsWith("image/")) return
@@ -149,7 +152,11 @@ private fun HoldUpApp(content: SharedContent) {
                         state = if (text.isBlank()) {
                             AnalysisState.Error("No readable text was found. Try a sharper image.")
                         } else {
-                            AnalysisState.Complete(DecisionAnalyzer.analyze(text), "Text found in shared image", text)
+                            AnalysisState.Complete(
+                                DecisionAnalyzer.analyze(text),
+                                "Text found in shared image",
+                                text
+                            )
                         }
                     }
                     .addOnFailureListener {
@@ -178,7 +185,9 @@ private fun HoldUpApp(content: SharedContent) {
     MaterialTheme {
         Surface(Modifier.fillMaxSize()) {
             Column(
-                Modifier.verticalScroll(rememberScrollState()).padding(24.dp),
+                modifier = Modifier
+                    .verticalScroll(rememberScrollState())
+                    .padding(24.dp),
                 verticalArrangement = Arrangement.Center
             ) {
                 Text("HOLD UP", style = MaterialTheme.typography.labelLarge)
@@ -187,21 +196,28 @@ private fun HoldUpApp(content: SharedContent) {
                 Spacer(Modifier.height(12.dp))
                 Text("Shared content stays on this device until you explicitly choose an action.")
                 Spacer(Modifier.height(24.dp))
+
                 when (val current = state) {
                     AnalysisState.Ready -> IntakeCard(content, ::analyze)
                     AnalysisState.Processing -> ProcessingCard()
                     is AnalysisState.Complete -> AnalysisCard(
-                        current.analysis,
-                        current.sourceLabel,
+                        analysis = current.analysis,
+                        sourceLabel = current.sourceLabel,
                         onPrimary = { primaryAction(current) },
                         onSecondary = {
                             message = "${current.analysis.secondaryAction} is not connected yet. HOLD UP made no device changes."
                         },
-                        onReviewAgain = { state = AnalysisState.Ready; message = null }
+                        onReviewAgain = {
+                            state = AnalysisState.Ready
+                            message = null
+                        }
                     )
                     is AnalysisState.ReviewBill -> BillReviewCard(
-                        current.draft,
-                        onBack = { state = AnalysisState.Ready; message = null },
+                        initial = current.draft,
+                        onBack = {
+                            state = AnalysisState.Ready
+                            message = null
+                        },
                         onConfirmed = { reviewed ->
                             runCatching { billStore.save(reviewed) }
                                 .onSuccess { saved ->
@@ -214,12 +230,16 @@ private fun HoldUpApp(content: SharedContent) {
                                 }
                         }
                     )
-                    is AnalysisState.Error -> ErrorCard(current.message) { state = AnalysisState.Ready }
+                    is AnalysisState.Error -> ErrorCard(current.message) {
+                        state = AnalysisState.Ready
+                    }
                 }
+
                 message?.let {
                     Spacer(Modifier.height(14.dp))
                     Text(it, style = MaterialTheme.typography.bodySmall)
                 }
+
                 if (savedBills.isNotEmpty()) {
                     Spacer(Modifier.height(24.dp))
                     SavedBillsCard(savedBills) { id ->
@@ -250,7 +270,13 @@ private fun IntakeCard(content: SharedContent, onAnalyze: () -> Unit) {
                 is SharedContent.File -> {
                     Text("Shared file ready", style = MaterialTheme.typography.titleLarge)
                     Text(if (content.mimeType == "application/pdf") "PDF document" else "Image")
-                    Text(if (content.mimeType.startsWith("image/")) "Visible text can be read locally." else "PDF extraction is not connected yet.")
+                    Text(
+                        if (content.mimeType.startsWith("image/")) {
+                            "Visible text can be read locally."
+                        } else {
+                            "PDF extraction is not connected yet."
+                        }
+                    )
                 }
                 is SharedContent.Unsupported -> {
                     Text("This format is not supported", style = MaterialTheme.typography.titleLarge)
@@ -259,7 +285,9 @@ private fun IntakeCard(content: SharedContent, onAnalyze: () -> Unit) {
             }
             when {
                 content is SharedContent.Text -> ActionButton("Analyze privately", onAnalyze)
-                content is SharedContent.File && content.mimeType.startsWith("image/") -> ActionButton("Read image and analyze", onAnalyze)
+                content is SharedContent.File && content.mimeType.startsWith("image/") -> {
+                    ActionButton("Read image and analyze", onAnalyze)
+                }
                 content is SharedContent.File -> ActionButton("PDF analysis coming later", {}, false)
             }
         }
@@ -298,24 +326,57 @@ private fun ErrorCard(message: String, onTryAgain: () -> Unit) {
 }
 
 @Composable
-private fun BillReviewCard(initial: BillDraft, onBack: () -> Unit, onConfirmed: (BillDraft) -> Unit) {
+private fun BillReviewCard(
+    initial: BillDraft,
+    onBack: () -> Unit,
+    onConfirmed: (BillDraft) -> Unit
+) {
     var merchant by remember(initial) { mutableStateOf(initial.merchant.orEmpty()) }
     var amount by remember(initial) { mutableStateOf(initial.amountDisplay().orEmpty()) }
     var dueDay by remember(initial) { mutableStateOf(initial.dueDay?.toString().orEmpty()) }
     var cadence by remember(initial) { mutableStateOf(initial.cadence?.displayName.orEmpty()) }
-    var autopay by remember(initial) { mutableStateOf(when (initial.autopayEnabled) { true -> "On"; false -> "Off"; null -> "Unknown" }) }
+    var autopay by remember(initial) {
+        mutableStateOf(
+            when (initial.autopayEnabled) {
+                true -> "On"
+                false -> "Off"
+                null -> "Unknown"
+            }
+        )
+    }
     var validation by remember(initial) { mutableStateOf<String?>(null) }
 
     fun reviewed(): BillDraft? {
-        val cents = amount.trim().removePrefix("$").replace(",", "").takeIf(String::isNotBlank)?.let {
-            try {
-                BigDecimal(it).setScale(2, RoundingMode.UNNECESSARY).movePointRight(2).longValueExact()
-            } catch (_: Exception) { null }
-        }
+        val cents = amount.trim().removePrefix("$").replace(",", "")
+            .takeIf(String::isNotBlank)
+            ?.let {
+                try {
+                    BigDecimal(it)
+                        .setScale(2, RoundingMode.UNNECESSARY)
+                        .movePointRight(2)
+                        .longValueExact()
+                } catch (_: Exception) {
+                    null
+                }
+            }
         val day = dueDay.toIntOrNull()?.takeIf { it in 1..31 }
-        val parsedCadence = BillCadence.entries.firstOrNull { it.displayName.equals(cadence.trim(), true) }
+        val parsedCadence = BillCadence.entries.firstOrNull {
+            it.displayName.equals(cadence.trim(), ignoreCase = true)
+        }
         if (merchant.isBlank() || day == null || parsedCadence == null) return null
-        return BillDraft(merchant.trim(), cents, day, parsedCadence, when (autopay) { "On" -> true; "Off" -> false; else -> null }, initial.detectedFields)
+        return BillDraft(
+            merchant = merchant.trim(),
+            amountCents = cents,
+            dueDay = day,
+            cadence = parsedCadence,
+            autopayEnabled = when (autopay) {
+                "On" -> true
+                "Off" -> false
+                else -> null
+            },
+            detectedFields = initial.detectedFields,
+            firstDueDate = initial.firstDueDate
+        )
     }
 
     Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp)) {
@@ -324,29 +385,66 @@ private fun BillReviewCard(initial: BillDraft, onBack: () -> Unit, onConfirmed: 
             Spacer(Modifier.height(8.dp))
             Text("Correct anything HOLD UP misread. Saving keeps an encrypted record on this device; it never schedules a payment.")
             Spacer(Modifier.height(18.dp))
-            OutlinedTextField(merchant, { merchant = it }, label = { Text("Merchant") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(
+                value = merchant,
+                onValueChange = { merchant = it },
+                label = { Text("Merchant") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
             Spacer(Modifier.height(12.dp))
-            OutlinedTextField(amount, { amount = it }, label = { Text("Amount (optional)") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(
+                value = amount,
+                onValueChange = { amount = it },
+                label = { Text("Amount (optional)") },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                modifier = Modifier.fillMaxWidth()
+            )
             Spacer(Modifier.height(12.dp))
-            OutlinedTextField(dueDay, { dueDay = it.filter(Char::isDigit).take(2) }, label = { Text("Due day (1–31)") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(
+                value = dueDay,
+                onValueChange = { dueDay = it.filter(Char::isDigit).take(2) },
+                label = { Text("Due day (1–31)") },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                modifier = Modifier.fillMaxWidth()
+            )
             Spacer(Modifier.height(12.dp))
-            OutlinedTextField(cadence, { cadence = it }, label = { Text("Weekly, Monthly, Quarterly, or Yearly") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(
+                value = cadence,
+                onValueChange = { cadence = it },
+                label = { Text("Weekly, Monthly, Quarterly, or Yearly") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
             Spacer(Modifier.height(16.dp))
             Text("Autopay", style = MaterialTheme.typography.titleSmall)
             Spacer(Modifier.height(8.dp))
-            Row(Modifier.fillMaxWidth()) {
-                listOf("On", "Off", "Unknown").forEachIndexed { index, option ->
-                    OutlinedButton({ autopay = option }, Modifier.weight(1f), enabled = autopay != option) { Text(option) }
-                    if (index < 2) Spacer(Modifier.width(8.dp))
+            listOf("On", "Off", "Unknown").forEach { option ->
+                OutlinedButton(
+                    onClick = { autopay = option },
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = autopay != option
+                ) {
+                    Text(option)
                 }
+                Spacer(Modifier.height(8.dp))
             }
-            validation?.let { Spacer(Modifier.height(12.dp)); Text(it, style = MaterialTheme.typography.bodySmall) }
-            Spacer(Modifier.height(20.dp))
-            Button(onClick = {
-                reviewed()?.let(onConfirmed) ?: run {
-                    validation = "Enter a merchant, valid due day, and supported cadence."
-                }
-            }, modifier = Modifier.fillMaxWidth()) { Text("Save privately") }
+            validation?.let {
+                Text(it, style = MaterialTheme.typography.bodySmall)
+                Spacer(Modifier.height(12.dp))
+            }
+            Button(
+                onClick = {
+                    reviewed()?.let(onConfirmed) ?: run {
+                        validation = "Enter a merchant, valid due day, and supported cadence."
+                    }
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Save privately")
+            }
             Spacer(Modifier.height(10.dp))
             OutlinedButton(onBack, Modifier.fillMaxWidth()) { Text("Back without saving") }
         }
@@ -359,14 +457,22 @@ private fun SavedBillsCard(bills: List<StoredBill>, onDelete: (String) -> Unit) 
         Column(Modifier.padding(20.dp)) {
             Text("Saved bills", style = MaterialTheme.typography.titleLarge)
             Spacer(Modifier.height(6.dp))
-            Text("Encrypted on this device. HOLD UP has not scheduled payments or reminders.", style = MaterialTheme.typography.bodySmall)
+            Text(
+                "Encrypted on this device. HOLD UP has not scheduled payments or reminders.",
+                style = MaterialTheme.typography.bodySmall
+            )
             bills.sortedBy { it.dueDay }.forEach { bill ->
                 Spacer(Modifier.height(18.dp))
                 Text(bill.merchant, style = MaterialTheme.typography.titleMedium)
-                Text(buildString {
-                    bill.amountDisplay()?.let { append("$it · ") }
-                    append("Due day ${bill.dueDay} · ${bill.cadence.displayName}")
-                })
+                Text(
+                    buildString {
+                        bill.amountDisplay()?.let { append("$it · ") }
+                        append("Due day ${bill.dueDay} · ${bill.cadence.displayName}")
+                    }
+                )
+                bill.firstDueDate?.let {
+                    Text("First confirmed due date: $it", style = MaterialTheme.typography.bodySmall)
+                }
                 Text(
                     when (bill.autopayEnabled) {
                         true -> "Autopay reported on"
@@ -376,7 +482,12 @@ private fun SavedBillsCard(bills: List<StoredBill>, onDelete: (String) -> Unit) 
                     style = MaterialTheme.typography.bodySmall
                 )
                 Spacer(Modifier.height(8.dp))
-                OutlinedButton({ onDelete(bill.id) }) { Text("Remove from device") }
+                OutlinedButton(
+                    onClick = { onDelete(bill.id) },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Remove from device")
+                }
             }
         }
     }
@@ -408,13 +519,14 @@ private fun AnalysisCard(
             Spacer(Modifier.height(20.dp))
             Button(onPrimary, Modifier.fillMaxWidth()) { Text(analysis.primaryAction) }
             Spacer(Modifier.height(10.dp))
-            Row(Modifier.fillMaxWidth()) {
-                OutlinedButton(onSecondary, Modifier.weight(1f)) { Text(analysis.secondaryAction) }
-                Spacer(Modifier.width(10.dp))
-                OutlinedButton(onReviewAgain, Modifier.weight(1f)) { Text("Review again") }
-            }
+            OutlinedButton(onSecondary, Modifier.fillMaxWidth()) { Text(analysis.secondaryAction) }
+            Spacer(Modifier.height(10.dp))
+            OutlinedButton(onReviewAgain, Modifier.fillMaxWidth()) { Text("Review again") }
             Spacer(Modifier.height(14.dp))
-            Text("First-pass guidance only. HOLD UP does not save events or bills without confirmation.", style = MaterialTheme.typography.bodySmall)
+            Text(
+                "First-pass guidance only. HOLD UP does not save events or bills without confirmation.",
+                style = MaterialTheme.typography.bodySmall
+            )
         }
     }
 }

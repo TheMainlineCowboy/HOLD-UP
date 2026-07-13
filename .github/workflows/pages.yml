@@ -1,0 +1,71 @@
+name: Publish HOLD UP web prototype
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "web/**"
+      - ".github/workflows/pages.yml"
+  pull_request:
+    paths:
+      - "web/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Validate JavaScript syntax
+        run: |
+          node --check web/app.js
+          node --check web/offline.js
+          node --check web/sw.js
+
+      - name: Verify web surface over HTTP
+        run: |
+          python3 -m http.server 4173 --directory web >/tmp/hold-up-pages.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid"' EXIT
+          sleep 1
+          for path in / /styles.css /app.js /offline.js /sw.js /manifest.webmanifest /icon.svg; do
+            curl --fail --silent --show-error "http://127.0.0.1:4173${path}" >/dev/null
+          done
+
+      - name: Upload validated Pages artifact
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: web
+
+  deploy:
+    if: github.event_name != 'pull_request'
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
+      - name: Deploy validated prototype
+        id: deployment
+        uses: actions/deploy-pages@v4
