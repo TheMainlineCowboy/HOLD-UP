@@ -53,6 +53,7 @@
 
     localStorage.removeItem(STORAGE_KEY);
     refreshPrivacySummary();
+    window.dispatchEvent(new CustomEvent('hold-up-history-cleared'));
     dialog.close();
     showToast('Private analysis history deleted from this browser.');
   });
