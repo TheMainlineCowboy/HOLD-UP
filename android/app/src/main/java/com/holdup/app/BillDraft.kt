@@ -2,6 +2,10 @@ package com.holdup.app
 
 import java.math.BigDecimal
 import java.math.RoundingMode
+import java.time.DateTimeException
+import java.time.LocalDate
+import java.time.Month
+import java.util.Locale
 
 enum class BillCadence(val displayName: String) {
     WEEKLY("Weekly"),
@@ -16,7 +20,8 @@ data class BillDraft(
     val dueDay: Int?,
     val cadence: BillCadence?,
     val autopayEnabled: Boolean?,
-    val detectedFields: Set<String>
+    val detectedFields: Set<String>,
+    val firstDueDate: LocalDate? = null
 ) {
     val isReadyToSave: Boolean
         get() = !merchant.isNullOrBlank() && dueDay in 1..31 && cadence != null
@@ -37,6 +42,11 @@ object BillDraftParser {
     private val merchantPattern = Regex(
         "(?im)^(?:merchant|provider|company|biller)\\s*:\\s*(.{2,80})$"
     )
+    private val isoDatePattern = Regex("\\b(20[0-9]{2})-(0?[1-9]|1[0-2])-([0-2]?[0-9]|3[01])\\b")
+    private val numericDatePattern = Regex("\\b(0?[1-9]|1[0-2])/([0-2]?[0-9]|3[01])/(20[0-9]{2})\\b")
+    private val namedDatePattern = Regex(
+        "(?i)\\b(January|February|March|April|May|June|July|August|September|October|November|December)\\s+([0-2]?[0-9]|3[01])(?:st|nd|rd|th)?(?:,\\s*|\\s+)(20[0-9]{2})\\b"
+    )
 
     fun parse(sourceText: String): BillDraft {
         val normalized = sourceText.trim()
@@ -52,7 +62,10 @@ object BillDraftParser {
             ?.let(::toCentsOrNull)
         if (amountCents != null) fields += "amount"
 
-        val dueDay = dueDayPattern.find(normalized)?.groupValues?.get(1)
+        val firstDueDate = parseExactDate(normalized)
+        if (firstDueDate != null) fields += "first due date"
+
+        val dueDay = firstDueDate?.dayOfMonth ?: dueDayPattern.find(normalized)?.groupValues?.get(1)
             ?.toIntOrNull()
             ?.takeIf { it in 1..31 }
         if (dueDay != null) fields += "due day"
@@ -69,8 +82,33 @@ object BillDraftParser {
             dueDay = dueDay,
             cadence = cadence,
             autopayEnabled = autopay,
-            detectedFields = fields
+            detectedFields = fields,
+            firstDueDate = firstDueDate
         )
+    }
+
+    private fun parseExactDate(text: String): LocalDate? {
+        isoDatePattern.find(text)?.let { match ->
+            localDateOrNull(match.groupValues[1], match.groupValues[2], match.groupValues[3])?.let { return it }
+        }
+        numericDatePattern.find(text)?.let { match ->
+            localDateOrNull(match.groupValues[3], match.groupValues[1], match.groupValues[2])?.let { return it }
+        }
+        namedDatePattern.find(text)?.let { match ->
+            val month = runCatching { Month.valueOf(match.groupValues[1].uppercase(Locale.US)) }.getOrNull()
+            if (month != null) {
+                localDateOrNull(match.groupValues[3], month.value.toString(), match.groupValues[2])?.let { return it }
+            }
+        }
+        return null
+    }
+
+    private fun localDateOrNull(year: String, month: String, day: String): LocalDate? = try {
+        LocalDate.of(year.toInt(), month.toInt(), day.toInt())
+    } catch (_: DateTimeException) {
+        null
+    } catch (_: NumberFormatException) {
+        null
     }
 
     private fun firstUsefulLine(text: String): String? = text.lineSequence()
