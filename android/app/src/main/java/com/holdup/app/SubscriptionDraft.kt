@@ -58,7 +58,7 @@ object SubscriptionDraftParser {
         "(?:from|was)\\s+(?:\\$|USD\\s*)?(\\d{1,4}(?:,\\d{3})*(?:\\.\\d{2})?)\\s+(?:to|now)\\s+(?:\\$|USD\\s*)?(\\d{1,4}(?:,\\d{3})*(?:\\.\\d{2})?)",
         RegexOption.IGNORE_CASE
     )
-    private val dateValue = "((?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\\s+\\d{1,2}(?:,\\s*\\d{4})?|\\d{1,2}/\\d{1,2}(?:/\\d{2,4})?)"
+    private val dateValue = "((?<!\\d)(?:(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\\s+\\d{1,2}(?:,\\s*\\d{4})?|\\d{1,2}/\\d{1,2}(?:/\\d{2,4})?)(?!\\d))"
     private val cancellationDatePattern = Regex("(?:cancel(?:lation)?(?: by| before)?|last day to cancel|before your trial ends)[^\\n]{0,25}$dateValue", RegexOption.IGNORE_CASE)
     private val nextChargePattern = Regex("(?:next charge|charged on|charge date|billing date)[^\\n]{0,25}$dateValue", RegexOption.IGNORE_CASE)
     private val effectiveDatePattern = Regex("(?:effective|new price starts?|price changes? on)[^\\n]{0,25}$dateValue", RegexOption.IGNORE_CASE)
