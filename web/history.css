@@ -1,0 +1,29 @@
+.analysis-empty-state {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  padding: 30px 22px;
+  border: 1px dashed rgba(255,255,255,.14);
+  border-radius: 22px;
+  background: rgba(15,29,50,.48);
+  text-align: center;
+}
+
+.analysis-empty-state[hidden] { display: none; }
+
+.empty-state-mark {
+  width: 54px;
+  height: 54px;
+  display: grid;
+  place-items: center;
+  border-radius: 18px;
+  color: #07111f;
+  background: linear-gradient(145deg, #8df5d7, #56d6b2);
+  box-shadow: 0 14px 30px rgba(65,204,166,.18);
+  font-size: 1.35rem;
+  font-weight: 950;
+}
+
+.analysis-empty-state h3 { margin: 4px 0 0; font-size: 1.05rem; }
+.analysis-empty-state p { max-width: 34ch; margin: 0; color: #9eb0c5; line-height: 1.55; }
+.history-meta { margin: -5px 0 0 !important; color: #7f94aa !important; font-size: .74rem !important; }
