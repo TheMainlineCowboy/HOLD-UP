@@ -27,41 +27,9 @@ object DecisionAnalyzer {
         val credentials = matches(listOf("password", "passcode", "verification code", "security code", "one-time code", "otp"))
         val payments = matches(listOf("gift card", "wire transfer", "crypto", "bitcoin", "zelle", "cash app", "venmo", "send money"))
         val pressure = matches(listOf("act now", "urgent", "immediately", "final notice", "account suspended", "within 24 hours", "do not tell"))
-        val subscriptions = matches(
-            listOf(
-                "subscription",
-                "free trial",
-                "renewal",
-                "renews",
-                "auto-renew",
-                "auto renew",
-                "automatically renew",
-                "recurring charge",
-                "membership",
-                "cancel anytime"
-            )
-        )
-        val priceChanges = matches(
-            listOf(
-                "price change",
-                "price increase",
-                "new price",
-                "rate increase",
-                "will increase",
-                "changing from",
-                "updated pricing"
-            )
-        )
-        val cancellationDeadlines = matches(
-            listOf(
-                "cancel by",
-                "cancel before",
-                "cancellation deadline",
-                "last day to cancel",
-                "avoid being charged",
-                "before your trial ends"
-            )
-        )
+        val subscriptions = matches(listOf("subscription", "free trial", "renewal", "renews", "auto-renew", "auto renew", "automatically renew", "recurring charge", "membership", "cancel anytime"))
+        val priceChanges = matches(listOf("price change", "price increase", "new price", "rate increase", "will increase", "changing from", "updated pricing"))
+        val cancellationDeadlines = matches(listOf("cancel by", "cancel before", "cancellation deadline", "last day to cancel", "avoid being charged", "before your trial ends"))
         val bills = matches(listOf("amount due", "payment due", "invoice", "statement balance", "past due", "due date"))
         val appointments = matches(listOf("appointment", "reservation", "scheduled for", "check-in", "meeting"))
         val hasLink = linkPattern.containsMatchIn(rawText)
@@ -86,11 +54,11 @@ object DecisionAnalyzer {
                     evidence += "Detected charge: $amount$cadence"
                 }
                 draft.annualizedDisplay()?.let { evidence += "Estimated recurring total: $it" }
-                draft.nextChargeOrDeadline?.let { evidence += "Detected charge or cancellation date: $it" }
+                draft.dateEvidence()?.let(evidence::add)
 
                 val headline = when {
+                    draft.dateIntent == SubscriptionDateIntent.CANCELLATION_DEADLINE -> "Review the cancellation deadline"
                     priceChanges.isNotEmpty() -> "Review the new subscription price"
-                    cancellationDeadlines.isNotEmpty() -> "Review the cancellation deadline"
                     else -> "Review the renewal terms"
                 }
                 DecisionResult(
