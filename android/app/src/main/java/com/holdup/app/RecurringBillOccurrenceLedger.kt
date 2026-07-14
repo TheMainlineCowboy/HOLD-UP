@@ -106,7 +106,7 @@ object RecurringBillOccurrenceLedger {
         )
     }
 
-    private fun String?.cleaned(): String? = trim().orEmpty().takeIf(String::isNotBlank)
+    private fun String?.cleaned(): String? = this?.trim()?.takeIf(String::isNotBlank)
 }
 
 data class BillOccurrenceView(
