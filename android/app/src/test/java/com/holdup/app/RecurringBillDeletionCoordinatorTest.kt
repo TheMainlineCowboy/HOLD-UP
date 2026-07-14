@@ -1,0 +1,119 @@
+package com.holdup.app
+
+import java.time.LocalDate
+import java.time.YearMonth
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class RecurringBillDeletionCoordinatorTest {
+    @Test
+    fun retainsLinkedHistoryWhenUserChoosesRetain() {
+        var historyDeleteCalled = false
+
+        val result = RecurringBillDeletionCoordinator.delete(
+            planId = "bill-1",
+            historyChoice = RecurringBillDeletionCoordinator.HistoryChoice.RETAIN,
+            loadPlans = { success(listOf(plan())) },
+            loadHistory = { success(listOf(record("bill-1"), record("other"))) },
+            deletePlan = { success(emptyList()) },
+            deleteHistory = { historyDeleteCalled = true; success(1) }
+        )
+
+        val complete = result as RecurringBillDeletionCoordinator.Result.Complete
+        assertEquals(1, complete.linkedHistoryCount)
+        assertEquals(0, complete.erasedHistoryCount)
+        assertTrue(!historyDeleteCalled)
+    }
+
+    @Test
+    fun erasesOnlyCountReportedByHistoryStoreBeforeDeletingPlan() {
+        val calls = mutableListOf<String>()
+
+        val result = RecurringBillDeletionCoordinator.delete(
+            planId = "bill-1",
+            historyChoice = RecurringBillDeletionCoordinator.HistoryChoice.ERASE,
+            loadPlans = { calls += "loadPlans"; success(listOf(plan())) },
+            loadHistory = { calls += "loadHistory"; success(listOf(record("bill-1"), record("bill-1"))) },
+            deletePlan = { calls += "deletePlan"; success(emptyList()) },
+            deleteHistory = { calls += "deleteHistory"; success(2) }
+        )
+
+        val complete = result as RecurringBillDeletionCoordinator.Result.Complete
+        assertEquals(listOf("loadPlans", "loadHistory", "deleteHistory", "deletePlan"), calls)
+        assertEquals(2, complete.linkedHistoryCount)
+        assertEquals(2, complete.erasedHistoryCount)
+    }
+
+    @Test
+    fun blocksWithoutWritingWhenEitherEncryptedStoreIsUnreadable() {
+        var wrote = false
+
+        val result = RecurringBillDeletionCoordinator.delete(
+            planId = "bill-1",
+            historyChoice = RecurringBillDeletionCoordinator.HistoryChoice.ERASE,
+            loadPlans = { success(listOf(plan())) },
+            loadHistory = { RecurringBillStoreResult.Unreadable },
+            deletePlan = { wrote = true; success(emptyList()) },
+            deleteHistory = { wrote = true; success(0) }
+        )
+
+        assertEquals(RecurringBillDeletionCoordinator.Result.Blocked, result)
+        assertTrue(!wrote)
+    }
+
+    @Test
+    fun reportsPartialFailureWhenHistoryWasErasedButPlanDeleteFails() {
+        val result = RecurringBillDeletionCoordinator.delete(
+            planId = "bill-1",
+            historyChoice = RecurringBillDeletionCoordinator.HistoryChoice.ERASE,
+            loadPlans = { success(listOf(plan())) },
+            loadHistory = { success(listOf(record("bill-1"))) },
+            deletePlan = { RecurringBillStoreResult.Unreadable },
+            deleteHistory = { success(1) }
+        )
+
+        assertEquals(
+            RecurringBillDeletionCoordinator.Result.PartialFailure(erasedHistoryCount = 1),
+            result
+        )
+    }
+
+    @Test
+    fun reportsPartialFailureWhenDeletedCountDoesNotMatchPreflight() {
+        var planDeleteCalled = false
+
+        val result = RecurringBillDeletionCoordinator.delete(
+            planId = "bill-1",
+            historyChoice = RecurringBillDeletionCoordinator.HistoryChoice.ERASE,
+            loadPlans = { success(listOf(plan())) },
+            loadHistory = { success(listOf(record("bill-1"), record("bill-1"))) },
+            deletePlan = { planDeleteCalled = true; success(emptyList()) },
+            deleteHistory = { success(1) }
+        )
+
+        assertEquals(
+            RecurringBillDeletionCoordinator.Result.PartialFailure(erasedHistoryCount = 1),
+            result
+        )
+        assertTrue(!planDeleteCalled)
+    }
+
+    private fun plan() = RecurringBillPlan(
+        id = "bill-1",
+        merchant = "Power Company",
+        startMonth = YearMonth.of(2026, 7),
+        dueDay = 15,
+        amountHistory = listOf(AmountHistoryEntry(LocalDate.of(2026, 7, 1), 8500))
+    )
+
+    private fun record(planId: String) = BillOccurrenceRecord(
+        planId = planId,
+        month = YearMonth.of(2026, 7),
+        status = BillOccurrenceStatus.SKIPPED,
+        updatedAtEpochMillis = 1L
+    )
+
+    private fun <T> success(value: T): RecurringBillStoreResult<T> =
+        RecurringBillStoreResult.Success(value)
+}
