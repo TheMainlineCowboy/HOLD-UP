@@ -56,6 +56,29 @@ internal class EncryptedBillOccurrenceRepository(context: Context) {
         return writeArray(updated)
     }
 
+    fun deleteAllForPlan(planId: String): RecurringBillStoreResult<Int> {
+        val current = when (val result = readArray()) {
+            is RecurringBillStoreResult.Success -> result.value
+            RecurringBillStoreResult.Unreadable -> return RecurringBillStoreResult.Unreadable
+            RecurringBillStoreResult.NotFound -> return RecurringBillStoreResult.NotFound
+        }
+        val updated = JSONArray()
+        var deletedCount = 0
+        for (index in 0 until current.length()) {
+            val item = current.getJSONObject(index)
+            if (item.optString("planId") == planId) {
+                deletedCount += 1
+            } else {
+                updated.put(item)
+            }
+        }
+        return when (val writeResult = writeArray(updated)) {
+            is RecurringBillStoreResult.Success -> RecurringBillStoreResult.Success(deletedCount)
+            RecurringBillStoreResult.Unreadable -> RecurringBillStoreResult.Unreadable
+            RecurringBillStoreResult.NotFound -> RecurringBillStoreResult.NotFound
+        }
+    }
+
     private fun BillOccurrenceRecord.toJson() = JSONObject()
         .put("planId", planId)
         .put("month", month.toString())
