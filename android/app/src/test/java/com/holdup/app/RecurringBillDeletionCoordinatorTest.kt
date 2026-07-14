@@ -69,8 +69,11 @@ class RecurringBillDeletionCoordinatorTest {
         )
 
         val complete = result as RecurringBillDeletionCoordinator.Result.Complete
+        assertEquals("Power Company", complete.deletedPlan.merchant)
+        assertEquals(RecurringBillDeletionCoordinator.HistoryChoice.RETAIN, complete.historyChoice)
         assertEquals(1, complete.linkedHistoryCount)
         assertEquals(0, complete.erasedHistoryCount)
+        assertEquals(1, complete.retainedHistoryCount)
         assertTrue(!historyDeleteCalled)
     }
 
@@ -89,8 +92,10 @@ class RecurringBillDeletionCoordinatorTest {
 
         val complete = result as RecurringBillDeletionCoordinator.Result.Complete
         assertEquals(listOf("loadPlans", "loadHistory", "deleteHistory", "deletePlan"), calls)
+        assertEquals(RecurringBillDeletionCoordinator.HistoryChoice.ERASE, complete.historyChoice)
         assertEquals(2, complete.linkedHistoryCount)
         assertEquals(2, complete.erasedHistoryCount)
+        assertEquals(0, complete.retainedHistoryCount)
     }
 
     @Test
@@ -111,7 +116,7 @@ class RecurringBillDeletionCoordinatorTest {
     }
 
     @Test
-    fun reportsPartialFailureWhenHistoryWasErasedButPlanDeleteFails() {
+    fun reportsExactPartialFailureWhenHistoryWasErasedButPlanDeleteFails() {
         val result = RecurringBillDeletionCoordinator.delete(
             planId = "bill-1",
             historyChoice = RecurringBillDeletionCoordinator.HistoryChoice.ERASE,
@@ -121,14 +126,15 @@ class RecurringBillDeletionCoordinatorTest {
             deleteHistory = { success(1) }
         )
 
-        assertEquals(
-            RecurringBillDeletionCoordinator.Result.PartialFailure(erasedHistoryCount = 1),
-            result
-        )
+        val partial = result as RecurringBillDeletionCoordinator.Result.PartialFailure
+        assertEquals("Power Company", partial.plan.merchant)
+        assertEquals(1, partial.linkedHistoryCount)
+        assertEquals(1, partial.erasedHistoryCount)
+        assertEquals(0, partial.remainingHistoryCount)
     }
 
     @Test
-    fun reportsPartialFailureWhenDeletedCountDoesNotMatchPreflight() {
+    fun reportsExactPartialFailureWhenDeletedCountDoesNotMatchPreflight() {
         var planDeleteCalled = false
 
         val result = RecurringBillDeletionCoordinator.delete(
@@ -140,10 +146,11 @@ class RecurringBillDeletionCoordinatorTest {
             deleteHistory = { success(1) }
         )
 
-        assertEquals(
-            RecurringBillDeletionCoordinator.Result.PartialFailure(erasedHistoryCount = 1),
-            result
-        )
+        val partial = result as RecurringBillDeletionCoordinator.Result.PartialFailure
+        assertEquals("Power Company", partial.plan.merchant)
+        assertEquals(2, partial.linkedHistoryCount)
+        assertEquals(1, partial.erasedHistoryCount)
+        assertEquals(1, partial.remainingHistoryCount)
         assertTrue(!planDeleteCalled)
     }
 
