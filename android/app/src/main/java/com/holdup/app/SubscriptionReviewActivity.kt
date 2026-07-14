@@ -1,5 +1,6 @@
 package com.holdup.app
 
+import android.app.DatePickerDialog
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -11,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.weight
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -23,12 +25,14 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import java.math.BigDecimal
@@ -142,24 +146,20 @@ private fun SubscriptionReviewScreen(
     var merchant by remember(initial) { mutableStateOf(initial.merchant) }
     var amount by remember(initial) { mutableStateOf(initial.amountCents?.toMoneyInput().orEmpty()) }
     var cadence by remember(initial) { mutableStateOf(initial.cadence) }
-    var nextCharge by remember(initial) { mutableStateOf(initial.nextChargeDate?.toString().orEmpty()) }
-    var cancellationDeadline by remember(initial) { mutableStateOf(initial.cancellationDeadline?.toString().orEmpty()) }
+    var nextCharge by remember(initial) { mutableStateOf(initial.nextChargeDate) }
+    var cancellationDeadline by remember(initial) { mutableStateOf(initial.cancellationDeadline) }
     var validation by remember(initial) { mutableStateOf<String?>(null) }
 
     fun buildReview(): SubscriptionReview? {
         val parsedAmount = amount.toCentsOrNull()
-        val parsedNextCharge = nextCharge.toLocalDateOrNull()
-        val parsedCancellation = cancellationDeadline.toLocalDateOrNull()
         if (merchant.isBlank()) return null
         if (amount.isNotBlank() && parsedAmount == null) return null
-        if (nextCharge.isNotBlank() && parsedNextCharge == null) return null
-        if (cancellationDeadline.isNotBlank() && parsedCancellation == null) return null
         return initial.copy(
             merchant = merchant.trim(),
             amountCents = parsedAmount,
             cadence = cadence,
-            nextChargeDate = parsedNextCharge,
-            cancellationDeadline = parsedCancellation
+            nextChargeDate = nextCharge,
+            cancellationDeadline = cancellationDeadline
         ).takeIf(SubscriptionReview::isReadyToSave)
     }
 
@@ -213,10 +213,18 @@ private fun SubscriptionReviewScreen(
                                 )
                             }
                         }
-                        Spacer(Modifier.height(12.dp))
-                        OutlinedTextField(nextCharge, { nextCharge = it }, label = { Text("Next charge date (YYYY-MM-DD)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                        Spacer(Modifier.height(12.dp))
-                        OutlinedTextField(cancellationDeadline, { cancellationDeadline = it }, label = { Text("Cancellation deadline (YYYY-MM-DD)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                        Spacer(Modifier.height(16.dp))
+                        SubscriptionDateField(
+                            label = "Next charge date",
+                            value = nextCharge,
+                            onValueChange = { nextCharge = it }
+                        )
+                        Spacer(Modifier.height(14.dp))
+                        SubscriptionDateField(
+                            label = "Cancellation deadline",
+                            value = cancellationDeadline,
+                            onValueChange = { cancellationDeadline = it }
+                        )
                         initial.previousAmountCents?.let {
                             Spacer(Modifier.height(14.dp))
                             Text("Previous price: ${it.toMoneyDisplay()}", style = MaterialTheme.typography.bodySmall)
@@ -233,7 +241,7 @@ private fun SubscriptionReviewScreen(
                         Button(
                             onClick = {
                                 buildReview()?.let(onSave) ?: run {
-                                    validation = "Enter a merchant and at least one valid price or date. Use YYYY-MM-DD for dates."
+                                    validation = "Enter a merchant and at least one valid price or selected date."
                                 }
                             },
                             modifier = Modifier.fillMaxWidth()
@@ -249,9 +257,41 @@ private fun SubscriptionReviewScreen(
     }
 }
 
+@Composable
+private fun SubscriptionDateField(
+    label: String,
+    value: LocalDate?,
+    onValueChange: (LocalDate?) -> Unit
+) {
+    val context = LocalContext.current
+    val pickerStart = value ?: LocalDate.now()
+
+    Text(label, style = MaterialTheme.typography.labelLarge)
+    Spacer(Modifier.height(8.dp))
+    Row(Modifier.fillMaxWidth()) {
+        OutlinedButton(
+            onClick = {
+                DatePickerDialog(
+                    context,
+                    { _, year, month, day -> onValueChange(LocalDate.of(year, month + 1, day)) },
+                    pickerStart.year,
+                    pickerStart.monthValue - 1,
+                    pickerStart.dayOfMonth
+                ).show()
+            },
+            modifier = Modifier.weight(1f)
+        ) {
+            Text(value?.toString() ?: "Choose date")
+        }
+        if (value != null) {
+            Spacer(Modifier.padding(horizontal = 4.dp))
+            TextButton(onClick = { onValueChange(null) }) { Text("Clear") }
+        }
+    }
+}
+
 private fun Long.toMoneyInput(): String = BigDecimal(this).movePointLeft(2).setScale(2).toPlainString()
 private fun Long.toMoneyDisplay(): String = "$" + toMoneyInput()
 private fun String.toCentsOrNull(): Long? = trim().removePrefix("$").replace(",", "").takeIf(String::isNotBlank)?.let {
     runCatching { BigDecimal(it).setScale(2, RoundingMode.UNNECESSARY).movePointRight(2).longValueExact() }.getOrNull()
 }
-private fun String.toLocalDateOrNull(): LocalDate? = trim().takeIf(String::isNotBlank)?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
