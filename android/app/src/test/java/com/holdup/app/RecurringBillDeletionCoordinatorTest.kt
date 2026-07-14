@@ -8,6 +8,54 @@ import org.junit.Test
 
 class RecurringBillDeletionCoordinatorTest {
     @Test
+    fun preflightReturnsExactLinkedHistoryCountWithoutWriting() {
+        var wrote = false
+
+        val result = RecurringBillDeletionCoordinator.preflight(
+            planId = "bill-1",
+            loadPlans = { success(listOf(plan())) },
+            loadHistory = { success(listOf(record("bill-1"), record("other"), record("bill-1"))) }
+        )
+
+        val ready = result as RecurringBillDeletionCoordinator.PreflightResult.Ready
+        assertEquals("Power Company", ready.plan.merchant)
+        assertEquals(2, ready.linkedHistoryCount)
+        assertTrue(!wrote)
+    }
+
+    @Test
+    fun preflightBlocksWhenEitherEncryptedStoreIsUnreadable() {
+        assertEquals(
+            RecurringBillDeletionCoordinator.PreflightResult.Blocked,
+            RecurringBillDeletionCoordinator.preflight(
+                planId = "bill-1",
+                loadPlans = { success(listOf(plan())) },
+                loadHistory = { RecurringBillStoreResult.Unreadable }
+            )
+        )
+        assertEquals(
+            RecurringBillDeletionCoordinator.PreflightResult.Blocked,
+            RecurringBillDeletionCoordinator.preflight(
+                planId = "bill-1",
+                loadPlans = { RecurringBillStoreResult.Unreadable },
+                loadHistory = { success(emptyList()) }
+            )
+        )
+    }
+
+    @Test
+    fun preflightBlocksWhenPlanNoLongerExists() {
+        assertEquals(
+            RecurringBillDeletionCoordinator.PreflightResult.Blocked,
+            RecurringBillDeletionCoordinator.preflight(
+                planId = "bill-1",
+                loadPlans = { success(emptyList()) },
+                loadHistory = { success(listOf(record("bill-1"))) }
+            )
+        )
+    }
+
+    @Test
     fun retainsLinkedHistoryWhenUserChoosesRetain() {
         var historyDeleteCalled = false
 
