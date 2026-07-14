@@ -1,5 +1,6 @@
 package com.holdup.app
 
+import android.app.DatePickerDialog
 import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -29,6 +30,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import java.math.BigDecimal
@@ -48,9 +50,7 @@ class HomeActivity : ComponentActivity() {
             }
             var showCreate by remember { mutableStateOf(false) }
             var pendingDelete by remember { mutableStateOf<RecurringBillPlan?>(null) }
-            var pendingOccurrenceAction by remember {
-                mutableStateOf<PendingOccurrenceAction?>(null)
-            }
+            var pendingOccurrenceAction by remember { mutableStateOf<PendingOccurrenceAction?>(null) }
             var message by remember { mutableStateOf<String?>(null) }
 
             fun reloadOccurrences() {
@@ -104,8 +104,9 @@ class HomeActivity : ComponentActivity() {
                                 existing = existing,
                                 planId = action.plan.id,
                                 month = action.occurrence.month,
-                                paidOn = LocalDate.now(),
-                                paidAmountCents = action.occurrence.amountCents
+                                paidOn = requireNotNull(action.paidOn),
+                                paidAmountCents = requireNotNull(action.paidAmountCents),
+                                note = action.note
                             )
                         )
                         OccurrenceActionKind.SKIP_MONTH -> occurrenceRepository.upsert(
@@ -126,7 +127,7 @@ class HomeActivity : ComponentActivity() {
                             reloadOccurrences()
                             message = when (action.kind) {
                                 OccurrenceActionKind.MARK_PAID ->
-                                    "${action.plan.merchant} was marked paid in HOLD UP only. The merchant did not confirm this payment."
+                                    "${action.plan.merchant} was recorded as ${requireNotNull(action.paidAmountCents).toMoney()} paid on ${action.paidOn} in HOLD UP only. The merchant did not confirm this payment."
                                 OccurrenceActionKind.SKIP_MONTH ->
                                     "${action.plan.merchant} was skipped for ${action.occurrence.month} in HOLD UP only."
                                 OccurrenceActionKind.UNDO ->
@@ -157,16 +158,16 @@ private sealed interface OccurrenceLedgerState {
     data object Unreadable : OccurrenceLedgerState
 }
 
-private enum class OccurrenceActionKind {
-    MARK_PAID,
-    SKIP_MONTH,
-    UNDO
-}
+private enum class OccurrenceActionKind { MARK_PAID, SKIP_MONTH, UNDO }
 
 private data class PendingOccurrenceAction(
     val kind: OccurrenceActionKind,
     val plan: RecurringBillPlan,
-    val occurrence: GeneratedBillOccurrence
+    val occurrence: GeneratedBillOccurrence,
+    val existingRecord: BillOccurrenceRecord? = null,
+    val paidOn: LocalDate? = null,
+    val paidAmountCents: Long? = null,
+    val note: String? = null
 )
 
 private fun RecurringBillStoreResult<List<RecurringBillPlan>>.toBillManagerState(): BillManagerState =
@@ -207,32 +208,25 @@ private fun HoldUpHomeScreen(
     MaterialTheme {
         Surface(Modifier.fillMaxSize()) {
             Column(
-                Modifier
-                    .verticalScroll(rememberScrollState())
-                    .padding(24.dp),
+                Modifier.verticalScroll(rememberScrollState()).padding(24.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 Text("HOLD UP", style = MaterialTheme.typography.labelLarge)
                 Text("Life-admin firewall", style = MaterialTheme.typography.headlineMedium)
                 Text("Private records stay on this device. HOLD UP never pays, cancels, schedules, or contacts anyone without your confirmation.")
-
                 OutlinedButton(onOpenSubscriptions, Modifier.fillMaxWidth()) {
                     Text("Review saved subscriptions")
                 }
-
                 if (occurrenceState is OccurrenceLedgerState.Unreadable) {
                     UnreadableOccurrenceLedgerCard(onRetryOccurrences)
                 }
-
                 when (state) {
                     BillManagerState.Unreadable -> UnreadableBillsCard(onRetryPlans)
                     is BillManagerState.Ready -> {
                         if (!showCreate) {
                             Button(onShowCreate, Modifier.fillMaxWidth()) { Text("Add recurring bill") }
                         }
-                        if (showCreate) {
-                            RecurringBillCreateCard(onSavePlan, onCancelCreate)
-                        }
+                        if (showCreate) RecurringBillCreateCard(onSavePlan, onCancelCreate)
                         if (state.plans.isEmpty()) {
                             EmptyBillsCard()
                         } else {
@@ -244,9 +238,7 @@ private fun HoldUpHomeScreen(
                                 val record = (occurrenceState as? OccurrenceLedgerState.Ready)
                                     ?.records
                                     ?.firstOrNull {
-                                        occurrence != null &&
-                                            it.planId == plan.id &&
-                                            it.month == occurrence.month
+                                        occurrence != null && it.planId == plan.id && it.month == occurrence.month
                                     }
                                 RecurringBillPlanCard(
                                     plan = plan,
@@ -260,15 +252,13 @@ private fun HoldUpHomeScreen(
                         }
                     }
                 }
-
                 pendingOccurrenceAction?.let { action ->
                     ConfirmOccurrenceActionCard(
                         action = action,
                         onCancel = onCancelOccurrenceAction,
-                        onConfirm = { onConfirmOccurrenceAction(action) }
+                        onConfirm = onConfirmOccurrenceAction
                     )
                 }
-
                 pendingDelete?.let { plan ->
                     DeleteBillPlanCard(
                         plan = plan,
@@ -276,7 +266,6 @@ private fun HoldUpHomeScreen(
                         onConfirm = { onConfirmDelete(plan) }
                     )
                 }
-
                 message?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
             }
         }
@@ -296,19 +285,10 @@ private fun RecurringBillCreateCard(
     var validation by remember { mutableStateOf<String?>(null) }
 
     fun buildPlan(): RecurringBillPlan? {
-        val amountCents = amount.trim().removePrefix("$").replace(",", "")
-            .takeIf(String::isNotBlank)
-            ?.let {
-                runCatching {
-                    BigDecimal(it)
-                        .setScale(2, RoundingMode.UNNECESSARY)
-                        .movePointRight(2)
-                        .longValueExact()
-                }.getOrNull()
-            }
+        val amountCents = amount.toMoneyCentsOrNull()
         val due = dueDay.toIntOrNull()?.takeIf { it in 1..31 }
         val preferred = payDay.toIntOrNull()?.takeIf { it in 1..31 }
-        if (merchant.isBlank() || amountCents == null || amountCents < 0 || due == null) return null
+        if (merchant.isBlank() || amountCents == null || due == null) return null
         return RecurringBillPlan(
             merchant = merchant.trim(),
             startMonth = YearMonth.now(),
@@ -324,32 +304,26 @@ private fun RecurringBillCreateCard(
         Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("Add recurring bill", style = MaterialTheme.typography.titleLarge)
             Text("HOLD UP will remember the schedule privately. It will not initiate a payment or create reminders yet.")
+            OutlinedTextField(merchant, { merchant = it }, label = { Text("Merchant") }, singleLine = true, modifier = Modifier.fillMaxWidth())
             OutlinedTextField(
-                value = merchant,
-                onValueChange = { merchant = it },
-                label = { Text("Merchant") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth()
-            )
-            OutlinedTextField(
-                value = amount,
-                onValueChange = { amount = it },
+                amount,
+                { amount = it },
                 label = { Text("Typical amount") },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth()
             )
             OutlinedTextField(
-                value = dueDay,
-                onValueChange = { dueDay = it.filter(Char::isDigit).take(2) },
+                dueDay,
+                { dueDay = it.filter(Char::isDigit).take(2) },
                 label = { Text("Due day (1–31)") },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth()
             )
             OutlinedTextField(
-                value = payDay,
-                onValueChange = { payDay = it.filter(Char::isDigit).take(2) },
+                payDay,
+                { payDay = it.filter(Char::isDigit).take(2) },
                 label = { Text("Preferred pay day (optional)") },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                 singleLine = true,
@@ -362,9 +336,7 @@ private fun RecurringBillCreateCard(
                         onClick = { autopay = option },
                         enabled = autopay != option,
                         modifier = Modifier.weight(1f)
-                    ) {
-                        Text(option.displayLabel())
-                    }
+                    ) { Text(option.displayLabel()) }
                 }
             }
             Text("Default reminders: 7 days and 1 day before. They are stored as preferences only; no alarm is scheduled.", style = MaterialTheme.typography.bodySmall)
@@ -405,18 +377,14 @@ private fun RecurringBillPlanCard(
                         Text("Status: Upcoming", style = MaterialTheme.typography.titleSmall)
                         Button(
                             onClick = {
-                                onRequestOccurrenceAction(
-                                    PendingOccurrenceAction(OccurrenceActionKind.MARK_PAID, plan, it.occurrence)
-                                )
+                                onRequestOccurrenceAction(PendingOccurrenceAction(OccurrenceActionKind.MARK_PAID, plan, it.occurrence))
                             },
                             enabled = occurrenceActionsEnabled,
                             modifier = Modifier.fillMaxWidth()
                         ) { Text("Mark paid") }
                         OutlinedButton(
                             onClick = {
-                                onRequestOccurrenceAction(
-                                    PendingOccurrenceAction(OccurrenceActionKind.SKIP_MONTH, plan, it.occurrence)
-                                )
+                                onRequestOccurrenceAction(PendingOccurrenceAction(OccurrenceActionKind.SKIP_MONTH, plan, it.occurrence))
                             },
                             enabled = occurrenceActionsEnabled,
                             modifier = Modifier.fillMaxWidth()
@@ -428,11 +396,24 @@ private fun RecurringBillPlanCard(
                             "User-reported ${it.paidAmountCents?.toMoney() ?: it.occurrence.amountCents.toMoney()} on ${it.paidOn}. This is not merchant confirmation.",
                             style = MaterialTheme.typography.bodySmall
                         )
-                        OutlinedButton(
+                        it.note?.let { note -> Text("Private note: $note", style = MaterialTheme.typography.bodySmall) }
+                        Button(
                             onClick = {
                                 onRequestOccurrenceAction(
-                                    PendingOccurrenceAction(OccurrenceActionKind.UNDO, plan, it.occurrence)
+                                    PendingOccurrenceAction(
+                                        kind = OccurrenceActionKind.MARK_PAID,
+                                        plan = plan,
+                                        occurrence = it.occurrence,
+                                        existingRecord = record
+                                    )
                                 )
+                            },
+                            enabled = occurrenceActionsEnabled,
+                            modifier = Modifier.fillMaxWidth()
+                        ) { Text("Correct payment details") }
+                        OutlinedButton(
+                            onClick = {
+                                onRequestOccurrenceAction(PendingOccurrenceAction(OccurrenceActionKind.UNDO, plan, it.occurrence))
                             },
                             enabled = occurrenceActionsEnabled,
                             modifier = Modifier.fillMaxWidth()
@@ -440,15 +421,10 @@ private fun RecurringBillPlanCard(
                     }
                     BillOccurrenceStatus.SKIPPED -> {
                         Text("Status: Skipped in HOLD UP", style = MaterialTheme.typography.titleSmall)
-                        Text(
-                            "This private status does not pause billing, stop autopay, or contact the merchant.",
-                            style = MaterialTheme.typography.bodySmall
-                        )
+                        Text("This private status does not pause billing, stop autopay, or contact the merchant.", style = MaterialTheme.typography.bodySmall)
                         OutlinedButton(
                             onClick = {
-                                onRequestOccurrenceAction(
-                                    PendingOccurrenceAction(OccurrenceActionKind.UNDO, plan, it.occurrence)
-                                )
+                                onRequestOccurrenceAction(PendingOccurrenceAction(OccurrenceActionKind.UNDO, plan, it.occurrence))
                             },
                             enabled = occurrenceActionsEnabled,
                             modifier = Modifier.fillMaxWidth()
@@ -457,15 +433,10 @@ private fun RecurringBillPlanCard(
                 }
             }
             if (!occurrenceActionsEnabled) {
-                Text(
-                    "Monthly status actions are unavailable until the encrypted history can be opened safely.",
-                    style = MaterialTheme.typography.bodySmall
-                )
+                Text("Monthly status actions are unavailable until the encrypted history can be opened safely.", style = MaterialTheme.typography.bodySmall)
             }
             Spacer(Modifier.height(4.dp))
-            OutlinedButton({ onRequestDelete(plan) }, Modifier.fillMaxWidth()) {
-                Text("Delete private plan")
-            }
+            OutlinedButton({ onRequestDelete(plan) }, Modifier.fillMaxWidth()) { Text("Delete private plan") }
         }
     }
 }
@@ -474,35 +445,114 @@ private fun RecurringBillPlanCard(
 private fun ConfirmOccurrenceActionCard(
     action: PendingOccurrenceAction,
     onCancel: () -> Unit,
-    onConfirm: () -> Unit
+    onConfirm: (PendingOccurrenceAction) -> Unit
 ) {
+    if (action.kind == OccurrenceActionKind.MARK_PAID) {
+        PaidDetailsCard(action, onCancel, onConfirm)
+        return
+    }
     val title = when (action.kind) {
-        OccurrenceActionKind.MARK_PAID -> "Mark ${action.plan.merchant} paid?"
         OccurrenceActionKind.SKIP_MONTH -> "Skip ${action.plan.merchant} this month?"
         OccurrenceActionKind.UNDO -> "Return ${action.plan.merchant} to upcoming?"
+        OccurrenceActionKind.MARK_PAID -> error("Handled above")
     }
     val explanation = when (action.kind) {
-        OccurrenceActionKind.MARK_PAID ->
-            "HOLD UP will record ${action.occurrence.amountCents.toMoney()} as paid today. This does not send money or verify payment with the merchant."
         OccurrenceActionKind.SKIP_MONTH ->
             "HOLD UP will hide this month from your actionable list. This does not pause billing, stop autopay, or contact the merchant."
         OccurrenceActionKind.UNDO ->
             "HOLD UP will remove the private paid or skipped status for ${action.occurrence.month}. No merchant record will change."
+        OccurrenceActionKind.MARK_PAID -> error("Handled above")
     }
     Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp)) {
         Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text(title, style = MaterialTheme.typography.titleLarge)
             Text(explanation)
-            Button(onConfirm, Modifier.fillMaxWidth()) {
-                Text(
-                    when (action.kind) {
-                        OccurrenceActionKind.MARK_PAID -> "Confirm paid"
-                        OccurrenceActionKind.SKIP_MONTH -> "Confirm skip"
-                        OccurrenceActionKind.UNDO -> "Confirm undo"
-                    }
-                )
+            Button({ onConfirm(action) }, Modifier.fillMaxWidth()) {
+                Text(if (action.kind == OccurrenceActionKind.SKIP_MONTH) "Confirm skip" else "Confirm undo")
             }
             OutlinedButton(onCancel, Modifier.fillMaxWidth()) { Text("Go back") }
+        }
+    }
+}
+
+@Composable
+private fun PaidDetailsCard(
+    action: PendingOccurrenceAction,
+    onCancel: () -> Unit,
+    onConfirm: (PendingOccurrenceAction) -> Unit
+) {
+    val context = LocalContext.current
+    val existing = action.existingRecord
+    var amount by remember(action) {
+        mutableStateOf((existing?.paidAmountCents ?: action.occurrence.amountCents).toMoneyInput())
+    }
+    var paidOn by remember(action) { mutableStateOf(existing?.paidOn ?: LocalDate.now()) }
+    var note by remember(action) { mutableStateOf(existing?.note.orEmpty()) }
+    var validation by remember(action) { mutableStateOf<String?>(null) }
+    val isCorrection = existing?.status == BillOccurrenceStatus.PAID
+
+    Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp)) {
+        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text(
+                if (isCorrection) "Correct payment details" else "Review payment details",
+                style = MaterialTheme.typography.titleLarge
+            )
+            Text(
+                "This creates a private user-reported record only. HOLD UP does not send money, verify the payment, or contact ${action.plan.merchant}."
+            )
+            OutlinedTextField(
+                value = amount,
+                onValueChange = { amount = it; validation = null },
+                label = { Text("Amount paid") },
+                supportingText = { Text("Scheduled amount: ${action.occurrence.amountCents.toMoney()}") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Text("Paid date", style = MaterialTheme.typography.titleSmall)
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(
+                    onClick = {
+                        DatePickerDialog(
+                            context,
+                            { _, year, month, day -> paidOn = LocalDate.of(year, month + 1, day) },
+                            paidOn.year,
+                            paidOn.monthValue - 1,
+                            paidOn.dayOfMonth
+                        ).show()
+                    },
+                    modifier = Modifier.weight(1f)
+                ) { Text(paidOn.toString()) }
+                OutlinedButton(onClick = { paidOn = LocalDate.now() }) { Text("Today") }
+            }
+            OutlinedTextField(
+                value = note,
+                onValueChange = { note = it.take(240) },
+                label = { Text("Private note (optional)") },
+                supportingText = { Text("Stored only in the encrypted monthly record") },
+                modifier = Modifier.fillMaxWidth(),
+                minLines = 2,
+                maxLines = 4
+            )
+            validation?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+            Button(
+                onClick = {
+                    val cents = amount.toMoneyCentsOrNull()
+                    if (cents == null) {
+                        validation = "Enter a valid non-negative amount with no more than two decimal places."
+                    } else {
+                        onConfirm(
+                            action.copy(
+                                paidOn = paidOn,
+                                paidAmountCents = cents,
+                                note = note.trim().takeIf(String::isNotBlank)
+                            )
+                        )
+                    }
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) { Text(if (isCorrection) "Save corrected details" else "Record paid privately") }
+            OutlinedButton(onCancel, Modifier.fillMaxWidth()) { Text("Go back without changing history") }
         }
     }
 }
@@ -536,7 +586,7 @@ private fun UnreadableOccurrenceLedgerCard(onRetry: () -> Unit) {
     Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp)) {
         Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text("Monthly status history is locked", style = MaterialTheme.typography.titleLarge)
-            Text("Bill plans remain visible, but HOLD UP disabled paid, skipped, and undo actions rather than risk overwriting private history it cannot safely read.")
+            Text("Bill plans remain visible, but HOLD UP disabled paid, skipped, correction, and undo actions rather than risk overwriting private history it cannot safely read.")
             Button(onRetry, Modifier.fillMaxWidth()) { Text("Retry private history") }
         }
     }
@@ -561,6 +611,17 @@ private fun DeleteBillPlanCard(
     }
 }
 
+private fun String.toMoneyCentsOrNull(): Long? =
+    trim().removePrefix("$").replace(",", "").takeIf(String::isNotBlank)?.let {
+        runCatching {
+            BigDecimal(it)
+                .setScale(2, RoundingMode.UNNECESSARY)
+                .movePointRight(2)
+                .longValueExact()
+                .takeIf { cents -> cents >= 0 }
+        }.getOrNull()
+    }
+
 private fun AutopayState.displayLabel(): String = when (this) {
     AutopayState.ENABLED -> "On"
     AutopayState.DISABLED -> "Off"
@@ -568,3 +629,4 @@ private fun AutopayState.displayLabel(): String = when (this) {
 }
 
 private fun Long.toMoney(): String = "$" + BigDecimal(this).movePointLeft(2).setScale(2).toPlainString()
+private fun Long.toMoneyInput(): String = BigDecimal(this).movePointLeft(2).setScale(2).toPlainString()
