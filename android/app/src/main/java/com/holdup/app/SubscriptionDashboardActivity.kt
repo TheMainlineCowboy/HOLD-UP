@@ -1,14 +1,10 @@
 package com.holdup.app
 
-import android.content.Context
 import android.os.Bundle
-import android.security.keystore.KeyProperties
-import android.util.Base64
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -30,20 +26,15 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import org.json.JSONArray
 import java.math.BigDecimal
-import java.security.KeyStore
 import java.time.LocalDate
-import javax.crypto.Cipher
-import javax.crypto.SecretKey
-import javax.crypto.spec.GCMParameterSpec
 
 class SubscriptionDashboardActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val store = DashboardSubscriptionStore(this)
+        val repository = EncryptedSubscriptionRepository(this)
         setContent {
-            var loadState by remember { mutableStateOf(store.load()) }
+            var loadState by remember { mutableStateOf(repository.loadSummaries().toDashboardState()) }
             var pendingDelete by remember { mutableStateOf<SavedSubscriptionSummary?>(null) }
 
             SubscriptionDashboardScreen(
@@ -52,10 +43,10 @@ class SubscriptionDashboardActivity : ComponentActivity() {
                 onRequestDelete = { pendingDelete = it },
                 onCancelDelete = { pendingDelete = null },
                 onConfirmDelete = { subscription ->
-                    loadState = store.delete(subscription.id)
+                    loadState = repository.delete(subscription.id).toDashboardState()
                     pendingDelete = null
                 },
-                onRetry = { loadState = store.load() }
+                onRetry = { loadState = repository.loadSummaries().toDashboardState() }
             )
         }
     }
@@ -65,6 +56,12 @@ private sealed interface DashboardLoadState {
     data class Ready(val subscriptions: List<SavedSubscriptionSummary>) : DashboardLoadState
     data object Unreadable : DashboardLoadState
 }
+
+private fun SubscriptionStoreResult<List<SavedSubscriptionSummary>>.toDashboardState(): DashboardLoadState =
+    when (this) {
+        is SubscriptionStoreResult.Success -> DashboardLoadState.Ready(value)
+        SubscriptionStoreResult.Unreadable -> DashboardLoadState.Unreadable
+    }
 
 @Composable
 private fun SubscriptionDashboardScreen(
@@ -98,9 +95,7 @@ private fun SubscriptionDashboardScreen(
                             EmptySubscriptionsCard()
                         } else {
                             PortfolioSummary(state.subscriptions)
-                            ordered.forEach { item ->
-                                SubscriptionCard(item, onRequestDelete)
-                            }
+                            ordered.forEach { item -> SubscriptionCard(item, onRequestDelete) }
                         }
                     }
                 }
@@ -216,87 +211,3 @@ private fun urgencyLabel(item: SubscriptionDashboardItem): String = when (item.u
 }
 
 private fun Long.toMoneyDisplay(): String = "$" + BigDecimal(this).movePointLeft(2).setScale(2).toPlainString()
-
-private class DashboardSubscriptionStore(context: Context) {
-    private val preferences = context.applicationContext.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
-
-    fun load(): DashboardLoadState {
-        val payload = preferences.getString(DATA_KEY, null) ?: return DashboardLoadState.Ready(emptyList())
-        return runCatching {
-            val array = JSONArray(decrypt(payload))
-            DashboardLoadState.Ready(
-                buildList {
-                    for (index in 0 until array.length()) {
-                        val item = array.getJSONObject(index)
-                        add(
-                            SavedSubscriptionSummary(
-                                id = item.getString("id"),
-                                merchant = item.getString("merchant"),
-                                amountCents = item.optLongOrNull("amountCents"),
-                                cadence = item.optStringOrNull("cadence")?.let { name ->
-                                    SubscriptionCadence.entries.firstOrNull { it.name == name }
-                                },
-                                nextChargeDate = item.optDate("nextChargeDate"),
-                                cancellationDeadline = item.optDate("cancellationDeadline")
-                            )
-                        )
-                    }
-                }
-            )
-        }.getOrElse { DashboardLoadState.Unreadable }
-    }
-
-    fun delete(id: String): DashboardLoadState {
-        val payload = preferences.getString(DATA_KEY, null) ?: return DashboardLoadState.Ready(emptyList())
-        return runCatching {
-            val current = JSONArray(decrypt(payload))
-            val updated = JSONArray()
-            for (index in 0 until current.length()) {
-                val item = current.getJSONObject(index)
-                if (item.optString("id") != id) updated.put(item)
-            }
-            preferences.edit().putString(DATA_KEY, encrypt(updated.toString())).commit()
-            load()
-        }.getOrElse { DashboardLoadState.Unreadable }
-    }
-
-    private fun encrypt(plainText: String): String {
-        val cipher = Cipher.getInstance(TRANSFORMATION)
-        cipher.init(Cipher.ENCRYPT_MODE, secretKey())
-        val encrypted = cipher.doFinal(plainText.toByteArray(Charsets.UTF_8))
-        return listOf(cipher.iv, encrypted).joinToString(".") { Base64.encodeToString(it, Base64.NO_WRAP) }
-    }
-
-    private fun decrypt(payload: String): String {
-        val parts = payload.split(".", limit = 2)
-        require(parts.size == 2)
-        val cipher = Cipher.getInstance(TRANSFORMATION)
-        cipher.init(
-            Cipher.DECRYPT_MODE,
-            secretKey(),
-            GCMParameterSpec(128, Base64.decode(parts[0], Base64.NO_WRAP))
-        )
-        return cipher.doFinal(Base64.decode(parts[1], Base64.NO_WRAP)).toString(Charsets.UTF_8)
-    }
-
-    private fun secretKey(): SecretKey {
-        val keyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
-        return requireNotNull(keyStore.getKey(KEY_ALIAS, null) as? SecretKey)
-    }
-
-    private fun org.json.JSONObject.optLongOrNull(key: String): Long? =
-        if (!has(key) || isNull(key)) null else getLong(key)
-
-    private fun org.json.JSONObject.optStringOrNull(key: String): String? =
-        if (!has(key) || isNull(key)) null else getString(key).takeIf(String::isNotBlank)
-
-    private fun org.json.JSONObject.optDate(key: String): LocalDate? =
-        optStringOrNull(key)?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
-
-    private companion object {
-        const val PREFERENCES_NAME = "hold_up_private_subscriptions"
-        const val DATA_KEY = "encrypted_subscriptions"
-        const val KEY_ALIAS = "hold_up_subscription_key_v1"
-        const val TRANSFORMATION = "AES/GCM/NoPadding"
-    }
-}

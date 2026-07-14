@@ -1,10 +1,6 @@
 package com.holdup.app
 
-import android.content.Context
 import android.os.Bundle
-import android.security.keystore.KeyGenParameterSpec
-import android.security.keystore.KeyProperties
-import android.util.Base64
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Column
@@ -32,17 +28,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
-import org.json.JSONArray
-import org.json.JSONObject
 import java.math.BigDecimal
 import java.math.RoundingMode
-import java.security.KeyStore
 import java.time.LocalDate
-import java.util.UUID
-import javax.crypto.Cipher
-import javax.crypto.KeyGenerator
-import javax.crypto.SecretKey
-import javax.crypto.spec.GCMParameterSpec
 
 class SubscriptionReviewActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -53,17 +41,17 @@ class SubscriptionReviewActivity : ComponentActivity() {
             SubscriptionDraftParser.parse(sourceText, LocalDate.now()),
             sourceLabel
         )
-        val store = SubscriptionStore(this)
+        val repository = EncryptedSubscriptionRepository(this)
         setContent {
             var outcome by remember { mutableStateOf<SaveOutcome?>(null) }
             when (val current = outcome) {
                 null -> SubscriptionReviewScreen(
                     initial = initial,
                     onSave = { review ->
-                        outcome = runCatching {
-                            store.save(review)
-                            SaveOutcome.Success(review.merchant)
-                        }.getOrElse { SaveOutcome.Failure }
+                        outcome = when (repository.save(review)) {
+                            is SubscriptionStoreResult.Success -> SaveOutcome.Success(review.merchant)
+                            SubscriptionStoreResult.Unreadable -> SaveOutcome.Failure
+                        }
                     },
                     onDiscard = ::finish
                 )
@@ -130,7 +118,7 @@ private fun SubscriptionSaveFailure(onTryAgain: () -> Unit, onClose: () -> Unit)
                 Spacer(Modifier.height(20.dp))
                 Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp)) {
                     Column(Modifier.padding(20.dp)) {
-                        Text("No subscription record was created. Your device may have temporarily rejected access to its encryption key.")
+                        Text("No subscription record was created or replaced. HOLD UP could not safely open the existing encrypted store, so it left your private data untouched.")
                         Spacer(Modifier.height(20.dp))
                         Button(onTryAgain, Modifier.fillMaxWidth()) { Text("Review and try again") }
                         Spacer(Modifier.height(10.dp))
@@ -248,72 +236,3 @@ private fun String.toCentsOrNull(): Long? = trim().removePrefix("$").replace(","
     runCatching { BigDecimal(it).setScale(2, RoundingMode.UNNECESSARY).movePointRight(2).longValueExact() }.getOrNull()
 }
 private fun String.toLocalDateOrNull(): LocalDate? = trim().takeIf(String::isNotBlank)?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
-
-private class SubscriptionStore(context: Context) {
-    private val preferences = context.applicationContext.getSharedPreferences("hold_up_private_subscriptions", Context.MODE_PRIVATE)
-
-    fun save(review: SubscriptionReview) {
-        require(review.isReadyToSave())
-        val current = loadJson()
-        current.put(
-            JSONObject()
-                .put("id", UUID.randomUUID().toString())
-                .put("merchant", review.merchant)
-                .put("amountCents", review.amountCents ?: JSONObject.NULL)
-                .put("previousAmountCents", review.previousAmountCents ?: JSONObject.NULL)
-                .put("cadence", review.cadence?.name ?: JSONObject.NULL)
-                .put("nextChargeDate", review.nextChargeDate?.toString() ?: JSONObject.NULL)
-                .put("cancellationDeadline", review.cancellationDeadline?.toString() ?: JSONObject.NULL)
-                .put("priceEffectiveDate", review.priceEffectiveDate?.toString() ?: JSONObject.NULL)
-                .put("renewalDate", review.renewalDate?.toString() ?: JSONObject.NULL)
-                .put("confidence", review.confidence.name)
-                .put("sourceLabel", review.sourceLabel)
-                .put("createdAtEpochMillis", System.currentTimeMillis())
-        )
-        preferences.edit().putString(DATA_KEY, encrypt(current.toString())).apply()
-    }
-
-    private fun loadJson(): JSONArray {
-        val payload = preferences.getString(DATA_KEY, null) ?: return JSONArray()
-        return runCatching { JSONArray(decrypt(payload)) }.getOrElse { JSONArray() }
-    }
-
-    private fun encrypt(plainText: String): String {
-        val cipher = Cipher.getInstance(TRANSFORMATION)
-        cipher.init(Cipher.ENCRYPT_MODE, secretKey())
-        val encrypted = cipher.doFinal(plainText.toByteArray(Charsets.UTF_8))
-        return listOf(cipher.iv, encrypted).joinToString(".") { Base64.encodeToString(it, Base64.NO_WRAP) }
-    }
-
-    private fun decrypt(payload: String): String {
-        val parts = payload.split(".", limit = 2)
-        require(parts.size == 2)
-        val cipher = Cipher.getInstance(TRANSFORMATION)
-        cipher.init(
-            Cipher.DECRYPT_MODE,
-            secretKey(),
-            GCMParameterSpec(128, Base64.decode(parts[0], Base64.NO_WRAP))
-        )
-        return cipher.doFinal(Base64.decode(parts[1], Base64.NO_WRAP)).toString(Charsets.UTF_8)
-    }
-
-    private fun secretKey(): SecretKey {
-        val keyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
-        (keyStore.getKey(KEY_ALIAS, null) as? SecretKey)?.let { return it }
-        return KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore").apply {
-            init(
-                KeyGenParameterSpec.Builder(KEY_ALIAS, KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
-                    .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
-                    .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
-                    .setRandomizedEncryptionRequired(true)
-                    .build()
-            )
-        }.generateKey()
-    }
-
-    private companion object {
-        const val DATA_KEY = "encrypted_subscriptions"
-        const val KEY_ALIAS = "hold_up_subscription_key_v1"
-        const val TRANSFORMATION = "AES/GCM/NoPadding"
-    }
-}
