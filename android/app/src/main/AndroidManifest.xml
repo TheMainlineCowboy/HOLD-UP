@@ -5,13 +5,17 @@
         android:label="HOLD UP"
         android:supportsRtl="true">
         <activity
-            android:name=".SubscriptionDashboardActivity"
+            android:name=".HomeActivity"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <activity
+            android:name=".SubscriptionDashboardActivity"
+            android:exported="false" />
 
         <activity
             android:name=".SubscriptionReviewActivity"
