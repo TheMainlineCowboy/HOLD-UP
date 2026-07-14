@@ -11,6 +11,15 @@ package com.holdup.app
 internal object RecurringBillDeletionCoordinator {
     enum class HistoryChoice { RETAIN, ERASE }
 
+    sealed interface PreflightResult {
+        data class Ready(
+            val plan: RecurringBillPlan,
+            val linkedHistoryCount: Int
+        ) : PreflightResult
+
+        data object Blocked : PreflightResult
+    }
+
     sealed interface Result {
         data class Complete(
             val remainingPlans: List<RecurringBillPlan>,
@@ -25,6 +34,29 @@ internal object RecurringBillDeletionCoordinator {
         ) : Result
     }
 
+    fun preflight(
+        planId: String,
+        loadPlans: () -> RecurringBillStoreResult<List<RecurringBillPlan>>,
+        loadHistory: () -> RecurringBillStoreResult<List<BillOccurrenceRecord>>
+    ): PreflightResult {
+        require(planId.isNotBlank()) { "Plan ID is required" }
+
+        val plans = when (val result = loadPlans()) {
+            is RecurringBillStoreResult.Success -> result.value
+            RecurringBillStoreResult.Unreadable,
+            RecurringBillStoreResult.NotFound -> return PreflightResult.Blocked
+        }
+        val plan = plans.firstOrNull { it.id == planId } ?: return PreflightResult.Blocked
+
+        val linkedHistoryCount = when (val result = loadHistory()) {
+            is RecurringBillStoreResult.Success -> result.value.count { it.planId == planId }
+            RecurringBillStoreResult.Unreadable,
+            RecurringBillStoreResult.NotFound -> return PreflightResult.Blocked
+        }
+
+        return PreflightResult.Ready(plan, linkedHistoryCount)
+    }
+
     fun delete(
         planId: String,
         historyChoice: HistoryChoice,
@@ -33,20 +65,11 @@ internal object RecurringBillDeletionCoordinator {
         deletePlan: () -> RecurringBillStoreResult<List<RecurringBillPlan>>,
         deleteHistory: () -> RecurringBillStoreResult<Int>
     ): Result {
-        require(planId.isNotBlank()) { "Plan ID is required" }
-
-        val plans = when (val result = loadPlans()) {
-            is RecurringBillStoreResult.Success -> result.value
-            RecurringBillStoreResult.Unreadable,
-            RecurringBillStoreResult.NotFound -> return Result.Blocked
+        val preflight = when (val result = preflight(planId, loadPlans, loadHistory)) {
+            is PreflightResult.Ready -> result
+            PreflightResult.Blocked -> return Result.Blocked
         }
-        if (plans.none { it.id == planId }) return Result.Blocked
-
-        val linkedHistoryCount = when (val result = loadHistory()) {
-            is RecurringBillStoreResult.Success -> result.value.count { it.planId == planId }
-            RecurringBillStoreResult.Unreadable,
-            RecurringBillStoreResult.NotFound -> return Result.Blocked
-        }
+        val linkedHistoryCount = preflight.linkedHistoryCount
 
         var erasedHistoryCount = 0
         if (historyChoice == HistoryChoice.ERASE) {
