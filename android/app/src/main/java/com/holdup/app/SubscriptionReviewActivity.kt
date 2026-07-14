@@ -1,5 +1,6 @@
 package com.holdup.app
 
+import android.app.Activity
 import android.app.DatePickerDialog
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -41,20 +42,54 @@ import java.time.LocalDate
 class SubscriptionReviewActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val sourceText = intent.getStringExtra(EXTRA_SOURCE_TEXT).orEmpty()
-        val sourceLabel = intent.getStringExtra(EXTRA_SOURCE_LABEL).orEmpty().ifBlank { "Shared content" }
-        val initial = SubscriptionReviewFactory.fromDraft(
-            SubscriptionDraftParser.parse(sourceText, LocalDate.now()),
-            sourceLabel
-        )
         val repository = EncryptedSubscriptionRepository(this)
+        val subscriptionId = intent.getStringExtra(EXTRA_SUBSCRIPTION_ID)
+        val isEditing = subscriptionId != null
+        val initialResult = if (subscriptionId != null) {
+            repository.loadReview(subscriptionId)
+        } else {
+            val sourceText = intent.getStringExtra(EXTRA_SOURCE_TEXT).orEmpty()
+            val sourceLabel = intent.getStringExtra(EXTRA_SOURCE_LABEL).orEmpty().ifBlank { "Shared content" }
+            SubscriptionStoreResult.Success(
+                SubscriptionReviewFactory.fromDraft(
+                    SubscriptionDraftParser.parse(sourceText, LocalDate.now()),
+                    sourceLabel
+                )
+            )
+        }
+
+        val initial = when (initialResult) {
+            is SubscriptionStoreResult.Success -> initialResult.value
+            SubscriptionStoreResult.Unreadable -> null
+        }
+
+        if (isEditing && initial == null && initialResult is SubscriptionStoreResult.Success) {
+            finish()
+            return
+        }
+
         setContent {
             var outcome by remember { mutableStateOf<SaveOutcome?>(null) }
+            if (initial == null) {
+                SubscriptionSaveFailure(
+                    isEditing = isEditing,
+                    onTryAgain = { recreate() },
+                    onClose = ::finish
+                )
+                return@setContent
+            }
+
             when (val current = outcome) {
                 null -> SubscriptionReviewScreen(
                     initial = initial,
+                    isEditing = isEditing,
                     onSave = { review ->
-                        outcome = when (repository.save(review)) {
+                        val result = if (subscriptionId == null) {
+                            repository.save(review)
+                        } else {
+                            repository.update(subscriptionId, review)
+                        }
+                        outcome = when (result) {
                             is SubscriptionStoreResult.Success -> SaveOutcome.Success(review.merchant)
                             SubscriptionStoreResult.Unreadable -> SaveOutcome.Failure
                         }
@@ -63,9 +98,14 @@ class SubscriptionReviewActivity : ComponentActivity() {
                 )
                 is SaveOutcome.Success -> SubscriptionSaveConfirmation(
                     merchant = current.merchant,
-                    onDone = ::finish
+                    isEditing = isEditing,
+                    onDone = {
+                        setResult(Activity.RESULT_OK)
+                        finish()
+                    }
                 )
                 SaveOutcome.Failure -> SubscriptionSaveFailure(
+                    isEditing = isEditing,
                     onTryAgain = { outcome = null },
                     onClose = ::finish
                 )
@@ -76,6 +116,7 @@ class SubscriptionReviewActivity : ComponentActivity() {
     companion object {
         const val EXTRA_SOURCE_TEXT = "com.holdup.app.extra.SUBSCRIPTION_SOURCE_TEXT"
         const val EXTRA_SOURCE_LABEL = "com.holdup.app.extra.SUBSCRIPTION_SOURCE_LABEL"
+        const val EXTRA_SUBSCRIPTION_ID = "com.holdup.app.extra.SUBSCRIPTION_ID"
     }
 }
 
@@ -85,7 +126,7 @@ private sealed interface SaveOutcome {
 }
 
 @Composable
-private fun SubscriptionSaveConfirmation(merchant: String, onDone: () -> Unit) {
+private fun SubscriptionSaveConfirmation(merchant: String, isEditing: Boolean, onDone: () -> Unit) {
     MaterialTheme {
         Surface(Modifier.fillMaxSize()) {
             Column(
@@ -95,7 +136,7 @@ private fun SubscriptionSaveConfirmation(merchant: String, onDone: () -> Unit) {
             ) {
                 Text("HOLD UP", style = MaterialTheme.typography.labelLarge)
                 Spacer(Modifier.height(8.dp))
-                Text("Saved privately", style = MaterialTheme.typography.headlineMedium)
+                Text(if (isEditing) "Updated privately" else "Saved privately", style = MaterialTheme.typography.headlineMedium)
                 Spacer(Modifier.height(20.dp))
                 Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp)) {
                     Column(Modifier.padding(20.dp)) {
@@ -103,7 +144,14 @@ private fun SubscriptionSaveConfirmation(merchant: String, onDone: () -> Unit) {
                         Spacer(Modifier.height(8.dp))
                         Text("This subscription record is encrypted with Android Keystore and stored only on this device.")
                         Spacer(Modifier.height(12.dp))
-                        Text("No charge, cancellation, reminder, or calendar event was created.", style = MaterialTheme.typography.bodySmall)
+                        Text(
+                            if (isEditing) {
+                                "Only this private HOLD UP record was updated. No merchant account, charge, cancellation, reminder, or calendar event was changed."
+                            } else {
+                                "No charge, cancellation, reminder, or calendar event was created."
+                            },
+                            style = MaterialTheme.typography.bodySmall
+                        )
                         Spacer(Modifier.height(20.dp))
                         Button(onDone, Modifier.fillMaxWidth()) { Text("Done") }
                     }
@@ -114,19 +162,30 @@ private fun SubscriptionSaveConfirmation(merchant: String, onDone: () -> Unit) {
 }
 
 @Composable
-private fun SubscriptionSaveFailure(onTryAgain: () -> Unit, onClose: () -> Unit) {
+private fun SubscriptionSaveFailure(isEditing: Boolean, onTryAgain: () -> Unit, onClose: () -> Unit) {
     MaterialTheme {
         Surface(Modifier.fillMaxSize()) {
             Column(Modifier.padding(24.dp)) {
                 Text("HOLD UP", style = MaterialTheme.typography.labelLarge)
                 Spacer(Modifier.height(8.dp))
-                Text("Could not save securely", style = MaterialTheme.typography.headlineMedium)
+                Text(
+                    if (isEditing) "Could not update securely" else "Could not save securely",
+                    style = MaterialTheme.typography.headlineMedium
+                )
                 Spacer(Modifier.height(20.dp))
                 Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp)) {
                     Column(Modifier.padding(20.dp)) {
-                        Text("No subscription record was created or replaced. HOLD UP could not safely open the existing encrypted store, so it left your private data untouched.")
+                        Text(
+                            if (isEditing) {
+                                "The existing encrypted record was not replaced. HOLD UP could not safely open or write the private store, so it left your saved data untouched."
+                            } else {
+                                "No subscription record was created or replaced. HOLD UP could not safely open the existing encrypted store, so it left your private data untouched."
+                            }
+                        )
                         Spacer(Modifier.height(20.dp))
-                        Button(onTryAgain, Modifier.fillMaxWidth()) { Text("Review and try again") }
+                        Button(onTryAgain, Modifier.fillMaxWidth()) {
+                            Text(if (isEditing) "Review and try update again" else "Review and try again")
+                        }
                         Spacer(Modifier.height(10.dp))
                         OutlinedButton(onClose, Modifier.fillMaxWidth()) { Text("Close without saving") }
                     }
@@ -139,6 +198,7 @@ private fun SubscriptionSaveFailure(onTryAgain: () -> Unit, onClose: () -> Unit)
 @Composable
 private fun SubscriptionReviewScreen(
     initial: SubscriptionReview,
+    isEditing: Boolean,
     onSave: (SubscriptionReview) -> Unit,
     onDiscard: () -> Unit
 ) {
@@ -171,9 +231,15 @@ private fun SubscriptionReviewScreen(
             ) {
                 Text("HOLD UP", style = MaterialTheme.typography.labelLarge)
                 Spacer(Modifier.height(8.dp))
-                Text("Review subscription", style = MaterialTheme.typography.headlineMedium)
+                Text(if (isEditing) "Edit subscription" else "Review subscription", style = MaterialTheme.typography.headlineMedium)
                 Spacer(Modifier.height(8.dp))
-                Text("Correct anything HOLD UP misread. Nothing is charged, cancelled, or scheduled from this screen.")
+                Text(
+                    if (isEditing) {
+                        "Correct this private record. HOLD UP will not change the merchant account or cancel anything."
+                    } else {
+                        "Correct anything HOLD UP misread. Nothing is charged, cancelled, or scheduled from this screen."
+                    }
+                )
                 Spacer(Modifier.height(20.dp))
                 Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp)) {
                     Column(Modifier.padding(20.dp)) {
@@ -228,7 +294,10 @@ private fun SubscriptionReviewScreen(
                             Spacer(Modifier.height(14.dp))
                             Text("Previous price: ${it.toMoneyDisplay()}", style = MaterialTheme.typography.bodySmall)
                         }
-                        initial.annualizedCents()?.let {
+                        initial.copy(
+                            amountCents = amount.toCentsOrNull(),
+                            cadence = cadence
+                        ).annualizedCents()?.let {
                             Spacer(Modifier.height(6.dp))
                             Text("Estimated annual cost: ${it.toMoneyDisplay()}", style = MaterialTheme.typography.bodySmall)
                         }
@@ -244,11 +313,20 @@ private fun SubscriptionReviewScreen(
                                 }
                             },
                             modifier = Modifier.fillMaxWidth()
-                        ) { Text("Save privately") }
+                        ) { Text(if (isEditing) "Update private record" else "Save privately") }
                         Spacer(Modifier.height(10.dp))
-                        OutlinedButton(onDiscard, Modifier.fillMaxWidth()) { Text("Discard") }
+                        OutlinedButton(onDiscard, Modifier.fillMaxWidth()) {
+                            Text(if (isEditing) "Cancel editing" else "Discard")
+                        }
                         Spacer(Modifier.height(14.dp))
-                        Text("Saved records are encrypted with Android Keystore and stay on this device.", style = MaterialTheme.typography.bodySmall)
+                        Text(
+                            if (isEditing) {
+                                "The original source and extraction confidence stay attached to this encrypted record."
+                            } else {
+                                "Saved records are encrypted with Android Keystore and stay on this device."
+                            },
+                            style = MaterialTheme.typography.bodySmall
+                        )
                     }
                 }
             }

@@ -27,20 +27,18 @@ internal class EncryptedSubscriptionRepository(context: Context) {
             buildList {
                 for (index in 0 until array.length()) {
                     val item = array.getJSONObject(index)
-                    add(
-                        SavedSubscriptionSummary(
-                            id = item.getString("id"),
-                            merchant = item.getString("merchant"),
-                            amountCents = item.optLongOrNull("amountCents"),
-                            cadence = item.optStringOrNull("cadence")?.let { name ->
-                                SubscriptionCadence.entries.firstOrNull { it.name == name }
-                            },
-                            nextChargeDate = item.optDate("nextChargeDate"),
-                            cancellationDeadline = item.optDate("cancellationDeadline")
-                        )
-                    )
+                    add(item.toSummary())
                 }
             }
+        }
+
+    fun loadReview(id: String): SubscriptionStoreResult<SubscriptionReview?> =
+        readArray().map { array ->
+            (0 until array.length())
+                .asSequence()
+                .map(array::getJSONObject)
+                .firstOrNull { it.optString("id") == id }
+                ?.toReview()
         }
 
     fun save(review: SubscriptionReview): SubscriptionStoreResult<Unit> {
@@ -49,22 +47,34 @@ internal class EncryptedSubscriptionRepository(context: Context) {
             is SubscriptionStoreResult.Success -> result.value
             SubscriptionStoreResult.Unreadable -> return SubscriptionStoreResult.Unreadable
         }
-        current.put(
-            JSONObject()
-                .put("id", UUID.randomUUID().toString())
-                .put("merchant", review.merchant)
-                .put("amountCents", review.amountCents ?: JSONObject.NULL)
-                .put("previousAmountCents", review.previousAmountCents ?: JSONObject.NULL)
-                .put("cadence", review.cadence?.name ?: JSONObject.NULL)
-                .put("nextChargeDate", review.nextChargeDate?.toString() ?: JSONObject.NULL)
-                .put("cancellationDeadline", review.cancellationDeadline?.toString() ?: JSONObject.NULL)
-                .put("priceEffectiveDate", review.priceEffectiveDate?.toString() ?: JSONObject.NULL)
-                .put("renewalDate", review.renewalDate?.toString() ?: JSONObject.NULL)
-                .put("confidence", review.confidence.name)
-                .put("sourceLabel", review.sourceLabel)
-                .put("createdAtEpochMillis", System.currentTimeMillis())
-        )
+        current.put(review.toJson(id = UUID.randomUUID().toString(), createdAtEpochMillis = System.currentTimeMillis()))
         return writeArray(current)
+    }
+
+    fun update(id: String, review: SubscriptionReview): SubscriptionStoreResult<Unit> {
+        require(review.isReadyToSave())
+        val current = when (val result = readArray()) {
+            is SubscriptionStoreResult.Success -> result.value
+            SubscriptionStoreResult.Unreadable -> return SubscriptionStoreResult.Unreadable
+        }
+        val updated = JSONArray()
+        var replaced = false
+        for (index in 0 until current.length()) {
+            val item = current.getJSONObject(index)
+            if (item.optString("id") == id) {
+                updated.put(
+                    review.toJson(
+                        id = id,
+                        createdAtEpochMillis = item.optLong("createdAtEpochMillis", System.currentTimeMillis())
+                    )
+                )
+                replaced = true
+            } else {
+                updated.put(item)
+            }
+        }
+        if (!replaced) return SubscriptionStoreResult.Unreadable
+        return writeArray(updated)
     }
 
     fun delete(id: String): SubscriptionStoreResult<List<SavedSubscriptionSummary>> {
@@ -82,6 +92,52 @@ internal class EncryptedSubscriptionRepository(context: Context) {
             SubscriptionStoreResult.Unreadable -> SubscriptionStoreResult.Unreadable
         }
     }
+
+    private fun SubscriptionReview.toJson(id: String, createdAtEpochMillis: Long): JSONObject =
+        JSONObject()
+            .put("id", id)
+            .put("merchant", merchant)
+            .put("amountCents", amountCents ?: JSONObject.NULL)
+            .put("previousAmountCents", previousAmountCents ?: JSONObject.NULL)
+            .put("cadence", cadence?.name ?: JSONObject.NULL)
+            .put("nextChargeDate", nextChargeDate?.toString() ?: JSONObject.NULL)
+            .put("cancellationDeadline", cancellationDeadline?.toString() ?: JSONObject.NULL)
+            .put("priceEffectiveDate", priceEffectiveDate?.toString() ?: JSONObject.NULL)
+            .put("renewalDate", renewalDate?.toString() ?: JSONObject.NULL)
+            .put("confidence", confidence.name)
+            .put("sourceLabel", sourceLabel)
+            .put("createdAtEpochMillis", createdAtEpochMillis)
+            .put("updatedAtEpochMillis", System.currentTimeMillis())
+
+    private fun JSONObject.toSummary(): SavedSubscriptionSummary =
+        SavedSubscriptionSummary(
+            id = getString("id"),
+            merchant = getString("merchant"),
+            amountCents = optLongOrNull("amountCents"),
+            cadence = optStringOrNull("cadence")?.let { name ->
+                SubscriptionCadence.entries.firstOrNull { it.name == name }
+            },
+            nextChargeDate = optDate("nextChargeDate"),
+            cancellationDeadline = optDate("cancellationDeadline")
+        )
+
+    private fun JSONObject.toReview(): SubscriptionReview =
+        SubscriptionReview(
+            merchant = getString("merchant"),
+            amountCents = optLongOrNull("amountCents"),
+            previousAmountCents = optLongOrNull("previousAmountCents"),
+            cadence = optStringOrNull("cadence")?.let { name ->
+                SubscriptionCadence.entries.firstOrNull { it.name == name }
+            },
+            nextChargeDate = optDate("nextChargeDate"),
+            cancellationDeadline = optDate("cancellationDeadline"),
+            priceEffectiveDate = optDate("priceEffectiveDate"),
+            renewalDate = optDate("renewalDate"),
+            confidence = optStringOrNull("confidence")
+                ?.let { name -> SubscriptionConfidence.entries.firstOrNull { it.name == name } }
+                ?: SubscriptionConfidence.LOW,
+            sourceLabel = optStringOrNull("sourceLabel") ?: "Saved subscription"
+        )
 
     private fun readArray(): SubscriptionStoreResult<JSONArray> {
         val payload = preferences.getString(DATA_KEY, null)

@@ -1,8 +1,12 @@
 package com.holdup.app
 
+import android.app.Activity
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -36,10 +40,23 @@ class SubscriptionDashboardActivity : ComponentActivity() {
         setContent {
             var loadState by remember { mutableStateOf(repository.loadSummaries().toDashboardState()) }
             var pendingDelete by remember { mutableStateOf<SavedSubscriptionSummary?>(null) }
+            val editLauncher = rememberLauncherForActivityResult(
+                ActivityResultContracts.StartActivityForResult()
+            ) { result ->
+                if (result.resultCode == Activity.RESULT_OK) {
+                    loadState = repository.loadSummaries().toDashboardState()
+                }
+            }
 
             SubscriptionDashboardScreen(
                 state = loadState,
                 pendingDelete = pendingDelete,
+                onEdit = { subscription ->
+                    editLauncher.launch(
+                        Intent(this, SubscriptionReviewActivity::class.java)
+                            .putExtra(SubscriptionReviewActivity.EXTRA_SUBSCRIPTION_ID, subscription.id)
+                    )
+                },
                 onRequestDelete = { pendingDelete = it },
                 onCancelDelete = { pendingDelete = null },
                 onConfirmDelete = { subscription ->
@@ -67,6 +84,7 @@ private fun SubscriptionStoreResult<List<SavedSubscriptionSummary>>.toDashboardS
 private fun SubscriptionDashboardScreen(
     state: DashboardLoadState,
     pendingDelete: SavedSubscriptionSummary?,
+    onEdit: (SavedSubscriptionSummary) -> Unit,
     onRequestDelete: (SavedSubscriptionSummary) -> Unit,
     onCancelDelete: () -> Unit,
     onConfirmDelete: (SavedSubscriptionSummary) -> Unit,
@@ -95,7 +113,7 @@ private fun SubscriptionDashboardScreen(
                             EmptySubscriptionsCard()
                         } else {
                             PortfolioSummary(state.subscriptions)
-                            ordered.forEach { item -> SubscriptionCard(item, onRequestDelete) }
+                            ordered.forEach { item -> SubscriptionCard(item, onEdit, onRequestDelete) }
                         }
                     }
                 }
@@ -132,6 +150,7 @@ private fun PortfolioSummary(subscriptions: List<SavedSubscriptionSummary>) {
 @Composable
 private fun SubscriptionCard(
     item: SubscriptionDashboardItem,
+    onEdit: (SavedSubscriptionSummary) -> Unit,
     onRequestDelete: (SavedSubscriptionSummary) -> Unit
 ) {
     val subscription = item.subscription
@@ -149,6 +168,10 @@ private fun SubscriptionCard(
             subscription.nextChargeDate?.let { Text("Next charge: $it", style = MaterialTheme.typography.bodySmall) }
             subscription.annualizedCents()?.let { Text("Estimated yearly: ${it.toMoneyDisplay()}", style = MaterialTheme.typography.bodySmall) }
             Spacer(Modifier.height(16.dp))
+            Button(onClick = { onEdit(subscription) }, modifier = Modifier.fillMaxWidth()) {
+                Text("Review or edit")
+            }
+            Spacer(Modifier.height(10.dp))
             OutlinedButton(onClick = { onRequestDelete(subscription) }, modifier = Modifier.fillMaxWidth()) {
                 Text("Delete private record")
             }
