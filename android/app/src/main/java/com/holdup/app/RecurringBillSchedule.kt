@@ -58,7 +58,7 @@ data class RecurringBillPlan(
     }
 }
 
-data class BillOccurrence(
+data class GeneratedBillOccurrence(
     val planId: String,
     val merchant: String,
     val month: YearMonth,
@@ -75,7 +75,7 @@ object RecurringBillSchedule {
         plan: RecurringBillPlan,
         fromMonth: YearMonth,
         months: Int
-    ): List<BillOccurrence> {
+    ): List<GeneratedBillOccurrence> {
         require(months >= 0) { "Month count cannot be negative" }
         if (months == 0) return emptyList()
 
@@ -85,7 +85,7 @@ object RecurringBillSchedule {
         }
     }
 
-    fun occurrenceFor(plan: RecurringBillPlan, month: YearMonth): BillOccurrence? {
+    fun occurrenceFor(plan: RecurringBillPlan, month: YearMonth): GeneratedBillOccurrence? {
         if (month < plan.startMonth) return null
         if (plan.endMonthInclusive != null && month > plan.endMonthInclusive) return null
 
@@ -105,7 +105,7 @@ object RecurringBillSchedule {
         val preferredPayDate = override?.preferredPayDate ?: defaultPayDate
         val amount = override?.amountCents ?: baseAmount
 
-        return BillOccurrence(
+        return GeneratedBillOccurrence(
             planId = plan.id,
             merchant = plan.merchant,
             month = month,
