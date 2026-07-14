@@ -3,7 +3,9 @@ package com.holdup.app
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -15,6 +17,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -138,27 +141,23 @@ private fun SubscriptionReviewScreen(
 ) {
     var merchant by remember(initial) { mutableStateOf(initial.merchant) }
     var amount by remember(initial) { mutableStateOf(initial.amountCents?.toMoneyInput().orEmpty()) }
-    var cadence by remember(initial) { mutableStateOf(initial.cadence?.displayName.orEmpty()) }
+    var cadence by remember(initial) { mutableStateOf(initial.cadence) }
     var nextCharge by remember(initial) { mutableStateOf(initial.nextChargeDate?.toString().orEmpty()) }
     var cancellationDeadline by remember(initial) { mutableStateOf(initial.cancellationDeadline?.toString().orEmpty()) }
     var validation by remember(initial) { mutableStateOf<String?>(null) }
 
     fun buildReview(): SubscriptionReview? {
         val parsedAmount = amount.toCentsOrNull()
-        val parsedCadence = SubscriptionCadence.entries.firstOrNull {
-            it.displayName.equals(cadence.trim(), ignoreCase = true)
-        }
         val parsedNextCharge = nextCharge.toLocalDateOrNull()
         val parsedCancellation = cancellationDeadline.toLocalDateOrNull()
         if (merchant.isBlank()) return null
         if (amount.isNotBlank() && parsedAmount == null) return null
-        if (cadence.isNotBlank() && parsedCadence == null) return null
         if (nextCharge.isNotBlank() && parsedNextCharge == null) return null
         if (cancellationDeadline.isNotBlank() && parsedCancellation == null) return null
         return initial.copy(
             merchant = merchant.trim(),
             amountCents = parsedAmount,
-            cadence = parsedCadence,
+            cadence = cadence,
             nextChargeDate = parsedNextCharge,
             cancellationDeadline = parsedCancellation
         ).takeIf(SubscriptionReview::isReadyToSave)
@@ -192,8 +191,28 @@ private fun SubscriptionReviewScreen(
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                             modifier = Modifier.fillMaxWidth()
                         )
-                        Spacer(Modifier.height(12.dp))
-                        OutlinedTextField(cadence, { cadence = it }, label = { Text("Weekly, Monthly, Quarterly, or Yearly") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                        Spacer(Modifier.height(16.dp))
+                        Text("Billing cadence", style = MaterialTheme.typography.labelLarge)
+                        Spacer(Modifier.height(8.dp))
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState())
+                        ) {
+                            FilterChip(
+                                selected = cadence == null,
+                                onClick = { cadence = null },
+                                label = { Text("Not sure") }
+                            )
+                            SubscriptionCadence.entries.forEach { option ->
+                                Spacer(Modifier.padding(horizontal = 4.dp))
+                                FilterChip(
+                                    selected = cadence == option,
+                                    onClick = { cadence = option },
+                                    label = { Text(option.displayName) }
+                                )
+                            }
+                        }
                         Spacer(Modifier.height(12.dp))
                         OutlinedTextField(nextCharge, { nextCharge = it }, label = { Text("Next charge date (YYYY-MM-DD)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                         Spacer(Modifier.height(12.dp))
