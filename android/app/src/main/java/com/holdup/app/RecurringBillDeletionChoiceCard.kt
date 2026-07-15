@@ -63,7 +63,7 @@ internal fun RecurringBillDeletionChoiceCard(
 
                 is RecurringBillDeletionFlow.State.Ready -> {
                     Text(state.copy.title, style = MaterialTheme.typography.titleLarge)
-                    Text(state.copy.body)
+                    Text(state.copy.historySummary)
                     Text(
                         "Choose what happens to the linked private history.",
                         style = MaterialTheme.typography.titleSmall
