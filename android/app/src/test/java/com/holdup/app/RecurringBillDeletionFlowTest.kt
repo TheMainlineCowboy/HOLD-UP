@@ -25,7 +25,8 @@ class RecurringBillDeletionFlowTest {
         status = BillOccurrenceStatus.PAID,
         paidOn = LocalDate.of(2026, 7, 10),
         paidAmountCents = 12_500,
-        note = null
+        note = null,
+        updatedAtEpochMillis = 1_752_105_600_000
     )
 
     @Test
