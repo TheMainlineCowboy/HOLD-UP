@@ -22,16 +22,26 @@ internal object RecurringBillDeletionCoordinator {
 
     sealed interface Result {
         data class Complete(
+            val deletedPlan: RecurringBillPlan,
             val remainingPlans: List<RecurringBillPlan>,
             val linkedHistoryCount: Int,
-            val erasedHistoryCount: Int
-        ) : Result
+            val erasedHistoryCount: Int,
+            val historyChoice: HistoryChoice
+        ) : Result {
+            val retainedHistoryCount: Int
+                get() = linkedHistoryCount - erasedHistoryCount
+        }
 
         data object Blocked : Result
 
         data class PartialFailure(
+            val plan: RecurringBillPlan,
+            val linkedHistoryCount: Int,
             val erasedHistoryCount: Int
-        ) : Result
+        ) : Result {
+            val remainingHistoryCount: Int
+                get() = (linkedHistoryCount - erasedHistoryCount).coerceAtLeast(0)
+        }
     }
 
     fun preflight(
@@ -79,20 +89,33 @@ internal object RecurringBillDeletionCoordinator {
                 RecurringBillStoreResult.NotFound -> return Result.Blocked
             }
             if (erasedHistoryCount != linkedHistoryCount) {
-                return Result.PartialFailure(erasedHistoryCount)
+                return Result.PartialFailure(
+                    plan = preflight.plan,
+                    linkedHistoryCount = linkedHistoryCount,
+                    erasedHistoryCount = erasedHistoryCount
+                )
             }
         }
 
         return when (val result = deletePlan()) {
             is RecurringBillStoreResult.Success -> Result.Complete(
+                deletedPlan = preflight.plan,
                 remainingPlans = result.value,
                 linkedHistoryCount = linkedHistoryCount,
-                erasedHistoryCount = erasedHistoryCount
+                erasedHistoryCount = erasedHistoryCount,
+                historyChoice = historyChoice
             )
             RecurringBillStoreResult.Unreadable,
             RecurringBillStoreResult.NotFound -> {
-                if (erasedHistoryCount > 0) Result.PartialFailure(erasedHistoryCount)
-                else Result.Blocked
+                if (erasedHistoryCount > 0) {
+                    Result.PartialFailure(
+                        plan = preflight.plan,
+                        linkedHistoryCount = linkedHistoryCount,
+                        erasedHistoryCount = erasedHistoryCount
+                    )
+                } else {
+                    Result.Blocked
+                }
             }
         }
     }
